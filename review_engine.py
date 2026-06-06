@@ -394,6 +394,17 @@ class ReviewEngine:
             return {"event": event, "comments": len(comments),
                     "review_id": result.get("id")}
         except Exception:
+            # REQUEST_CHANGES/APPROVE 对自己的 PR 会被 GitHub 拒绝(422)：
+            # 先降级为 COMMENT 方式重试，保住行级评论
+            if event != "COMMENT":
+                try:
+                    result = self.github_.create_review(
+                        owner, repo, number, report, event="COMMENT",
+                        comments=comments, task_id=task_id)
+                    return {"event": "COMMENT", "comments": len(comments),
+                            "review_id": result.get("id")}
+                except Exception:
+                    pass
             # 行级评论可能因行号不在 diff 中被整体拒绝：降级为整体评论
             self.store_.record_event("github_comment", {"task_id": task_id,
                                                         "fallback": True})

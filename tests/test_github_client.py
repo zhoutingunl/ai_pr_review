@@ -1,6 +1,6 @@
 """github_client.py 测试（mock HTTP）。"""
 import pytest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import requests
 
@@ -56,9 +56,29 @@ def test_request_http_error(store):
 def test_request_network_error(store):
     client = make_client(store)
     client.session_.request.side_effect = requests.ConnectionError("断网")
-    with pytest.raises(GithubError, match="请求异常"):
-        client.get_pull("a", "b", 1)
+    with patch("github_client.time.sleep"):
+        with pytest.raises(GithubError, match="请求异常"):
+            client.get_pull("a", "b", 1)
+    assert client.session_.request.call_count == 3  # GET 自动重试
     assert store.list_github_metrics()[0]["success"] == 0
+
+
+def test_request_retry_then_success(store):
+    client = make_client(store)
+    client.session_.request.side_effect = [
+        requests.Timeout("超时"), fake_resp(json_data={"title": "T"})]
+    with patch("github_client.time.sleep"):
+        assert client.get_pull("a", "b", 1)["title"] == "T"
+    assert store.list_github_metrics()[0]["success"] == 1
+
+
+def test_request_write_no_retry(store):
+    client = make_client(store)
+    client.session_.request.side_effect = requests.Timeout("超时")
+    with patch("github_client.time.sleep"):
+        with pytest.raises(GithubError):
+            client.create_issue_comment("a", "b", 1, "x")
+    assert client.session_.request.call_count == 1  # 写操作不重试
 
 
 def test_paginate_multi_page():

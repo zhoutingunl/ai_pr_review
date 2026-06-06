@@ -65,11 +65,21 @@ class GithubClient:
                  task_id: int | None = None, **kwargs):
         started = time.time()
         url = path if path.startswith("http") else f"{_API}{path}"
-        try:
-            resp = self.session_.request(method, url, timeout=30, **kwargs)
-        except requests.RequestException as e:
-            self._record(operation, False, started, str(e), task_id)
-            raise GithubError(f"GitHub 请求异常: {e}") from e
+        # GET 幂等，网络抖动（超时/断连）自动重试；写操作不重试避免重复提交
+        attempts = 3 if method.upper() == "GET" else 1
+        last_error: Exception | None = None
+        resp = None
+        for attempt in range(attempts):
+            try:
+                resp = self.session_.request(method, url, timeout=60, **kwargs)
+                break
+            except requests.RequestException as e:
+                last_error = e
+                if attempt < attempts - 1:
+                    time.sleep(2 * (attempt + 1))
+        if resp is None:
+            self._record(operation, False, started, str(last_error), task_id)
+            raise GithubError(f"GitHub 请求异常: {last_error}") from last_error
         if resp.status_code >= 400:
             error = f"{resp.status_code}: {resp.text[:300]}"
             self._record(operation, False, started, error, task_id)

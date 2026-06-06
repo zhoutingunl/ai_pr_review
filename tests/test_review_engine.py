@@ -97,6 +97,30 @@ def test_run_failure_recorded(store):
     assert store.count_events("review_failed") == 1
 
 
+def test_writeback_degrade_to_comment_review(store):
+    """自己的 PR 不允许 REQUEST_CHANGES：降级为 COMMENT 并保住行级评论。"""
+    engine, gh, _, _ = make_engine(store, ai_review_json={
+        "issues": [{"file": "a.py", "line": 1, "category": "security",
+                    "level": "P0", "confidence": 0.95, "message": "注入"}],
+        "rejected": [], "conclusion": "",
+    })
+    calls = []
+
+    def create_review(owner, repo, number, body, event="COMMENT",
+                      comments=None, task_id=None):
+        calls.append(event)
+        if event == "REQUEST_CHANGES":
+            raise RuntimeError("422 Can not request changes on your own PR")
+        return {"id": 33}
+
+    gh.create_review.side_effect = create_review
+    result = engine.run("https://github.com/o/r/pull/11")
+    assert calls == ["REQUEST_CHANGES", "COMMENT"]
+    assert result["review"]["event"] == "COMMENT"
+    assert result["review"]["comments"] == 1  # 行级评论保留
+    gh.create_issue_comment.assert_not_called()
+
+
 def test_writeback_fallback_to_comment(store):
     engine, gh, _, _ = make_engine(store, ai_review_json={
         "issues": [{"file": "a.py", "line": 999, "category": "security",

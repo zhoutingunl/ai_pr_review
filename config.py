@@ -35,8 +35,8 @@ _DEFAULTS = {
     },
 
     # AI 调用控制
-    "ai_timeout": 300,           # 单轮总时长预算（秒）
-    "ai_first_event_timeout": 60,  # 首事件看门狗（秒）
+    "ai_timeout": 600,             # 单轮总时长预算（秒）
+    "ai_first_event_timeout": 240,  # 首事件看门狗（秒）；大 prompt 下推理模型首 token 可能超过 1 分钟
 
     # 误报控制
     "confidence_threshold": 0.70,

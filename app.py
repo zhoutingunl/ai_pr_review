@@ -5,7 +5,10 @@
 """
 from __future__ import annotations
 
-import json
+# gevent monkey patch 必须先于 ssl/requests 等模块导入，否则 RecursionError
+if __name__ == "__main__":  # pragma: no cover - 真实服务启动路径
+    from gevent import monkey
+    monkey.patch_all()
 
 from flask import Flask, jsonify, render_template, request
 
@@ -144,6 +147,4 @@ def create_app(store: Store | None = None) -> ReviewWebApp:
 
 
 if __name__ == "__main__":  # pragma: no cover
-    from gevent import monkey
-    monkey.patch_all()
     create_app().run()
