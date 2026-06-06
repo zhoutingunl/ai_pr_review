@@ -1,0 +1,9 @@
+{
+  "port": 38001,
+  "models": {
+    "review": {"primary": "glm-5.1", "fallback": ["kimi-k2.5", "MiniMax-M3"]},
+    "summary": {"primary": "kimi-k2.5", "fallback": ["glm-5.1", "MiniMax-M3"]},
+    "fix": {"primary": "kimi-k2.5", "fallback": ["glm-5.1", "MiniMax-M3"]}
+  },
+  "confidence_threshold": 0.70
+}
