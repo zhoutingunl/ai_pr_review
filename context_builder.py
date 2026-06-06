@@ -19,7 +19,6 @@ from config import CONFIG
 # 各语言 import 提取正则 -> 捕获模块/路径字符串
 _IMPORT_PATTERNS = {
     ".py": [
-        re.compile(r"^\s*from\s+([\w.]+)\s+import\b", re.M),
         re.compile(r"^\s*import\s+([\w.]+)", re.M),
     ],
     ".js": [
@@ -45,6 +44,10 @@ _CODE_EXTS = set(_IMPORT_PATTERNS) | {".rs", ".cpp", ".cc", ".h", ".hpp"}
 _GO_IMPORT_BLOCK = re.compile(r"import\s*\((.*?)\)", re.S)
 _GO_IMPORT_SINGLE = re.compile(r'^\s*import\s+"([\w./-]+)"', re.M)
 
+# python from-import：from X import a, b -> 同时给出 X 与 X.a / X.b
+# （from app import dao 中 dao 可能本身就是模块）
+_PY_FROM_IMPORT = re.compile(r"^\s*from\s+([\w.]+)\s+import\s+([\w.,\s]+)", re.M)
+
 
 def _ext(path: str) -> str:
     return os.path.splitext(path)[1].lower()
@@ -61,6 +64,13 @@ def extract_imports(path: str, content: str) -> list[str]:
             found.extend(_IMPORT_PATTERNS[".go"][0].findall(block))
         return found
     found = []
+    if ext == ".py":
+        for mod, names in _PY_FROM_IMPORT.findall(content):
+            found.append(mod)
+            for name in names.split(","):
+                name = name.strip().split()[0] if name.strip() else ""
+                if name and name != "*":
+                    found.append(f"{mod}.{name}")
     for pattern in _IMPORT_PATTERNS[ext]:
         found.extend(pattern.findall(content))
     return found
@@ -86,25 +96,31 @@ def resolve_import(imp: str, source_path: str, tree: list[str]) -> str | None:
     # 点分模块（python/java/kotlin: a.b.c）或路径式（go: pkg/sub）
     parts = imp.replace(".", "/").split("/") if "." in imp else imp.split("/")
     stem = parts[-1]
+    # 后缀从长到短：最长匹配优先（myapp/pkg/dao 先于 dao）
     suffixes = ["/".join(parts[i:]) for i in range(len(parts))]
-    best = None
-    for path in tree:
-        if _ext(path) not in _CODE_EXTS:
-            continue
-        no_ext = os.path.splitext(path)[0]
-        for suffix in suffixes:
-            if no_ext == suffix or no_ext.endswith("/" + suffix):
-                # 同目录优先；其余取第一个命中
+    code_paths = [p for p in tree if _ext(p) in _CODE_EXTS]
+    for suffix in suffixes:
+        same_dir, candidate = None, None
+        for path in code_paths:
+            no_ext = os.path.splitext(path)[0]
+            dir_name = os.path.dirname(path)
+            if (no_ext == suffix or no_ext.endswith("/" + suffix)
+                    or no_ext == suffix + "/__init__"
+                    or no_ext.endswith("/" + suffix + "/__init__")
+                    # go 等以包目录为导入单位：匹配目录
+                    or dir_name == suffix
+                    or dir_name.endswith("/" + suffix)):
                 if os.path.dirname(path) == source_dir:
-                    return path
-                best = best or path
-        # python 包 __init__
-        if no_ext.endswith("/".join(parts) + "/__init__"):
-            best = best or path
-        # 兜底：文件名 stem 相同
-        if best is None and os.path.basename(no_ext) == stem:
-            best = path
-    return best
+                    same_dir = path
+                    break
+                candidate = candidate or path
+        if same_dir or candidate:
+            return same_dir or candidate
+    # 兜底：文件名 stem 相同
+    for path in code_paths:
+        if os.path.basename(os.path.splitext(path)[0]) == stem:
+            return path
+    return None
 
 
 class ContextBuilder:
@@ -183,6 +199,8 @@ class ContextBuilder:
         related: dict[str, str] = {}
         for path, content in changed_contents.items():
             for imp in extract_imports(path, content):
+                if len(related) >= self.max_related_:
+                    return related
                 target = resolve_import(imp, path, tree)
                 if (not target or target in changed_paths
                         or target in related):
@@ -191,8 +209,6 @@ class ContextBuilder:
                     owner, repo, target, ref, task_id=task_id)
                 if text:
                     related[target] = text[: self.max_file_bytes_]
-                if len(related) >= self.max_related_:
-                    return related
         return related
 
     # ---------- 三级 ----------

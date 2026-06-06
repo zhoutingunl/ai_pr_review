@@ -61,7 +61,7 @@ class AIService:
                  models: dict | None = None):
         self.base_ = (base or CONFIG.hermes_base_).rstrip("/")
         self.store_ = store
-        self.models_ = models or CONFIG.models
+        self.models_ = models if models is not None else CONFIG.models
         self.timeout_ = int(CONFIG.get("ai_timeout", 300))
         self.first_event_timeout_ = int(CONFIG.get("ai_first_event_timeout", 60))
 

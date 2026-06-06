@@ -132,7 +132,7 @@ class ReviewWebApp:
 
     # ---------- 启动 ----------
 
-    def run(self) -> None:
+    def run(self) -> None:  # pragma: no cover - 真实网络服务启动
         from gevent.pywsgi import WSGIServer
         server = WSGIServer((CONFIG.host, CONFIG.port), self.app_)
         print(f"AI PR Review 已启动: http://{CONFIG.host}:{CONFIG.port}")
@@ -143,7 +143,7 @@ def create_app(store: Store | None = None) -> ReviewWebApp:
     return ReviewWebApp(__name__, store=store)
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     from gevent import monkey
     monkey.patch_all()
     create_app().run()
