@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card mb-4">
+  <div class="card-body">
+    <h5 class="card-title">发起 PR 评审</h5>
+    <div class="input-group">
+      <input id="pr-url" type="text" class="form-control"
+             placeholder="https://github.com/owner/repo/pull/123">
+      <div class="input-group-text">
+        <input id="write-back" class="form-check-input mt-0 me-1" type="checkbox" checked>
+        <label for="write-back" class="form-check-label small">回写 GitHub</label>
+      </div>
+      <button id="submit-btn" class="btn btn-primary">开始评审</button>
+    </div>
+    <div id="submit-msg" class="form-text"></div>
+  </div>
+</div>
+
+<h5>评审任务</h5>
+<table class="table table-hover bg-white" id="task-table">
+  <thead><tr>
+    <th>ID</th><th>仓库</th><th>PR</th><th>状态</th>
+    <th>评分</th><th>风险</th><th>耗时</th><th>创建时间</th>
+  </tr></thead>
+  <tbody>
+  {% for t in tasks %}
+    <tr class="task-row" data-id="{{ t.id }}">
+      <td>{{ t.id }}</td>
+      <td>{{ t.repo }}</td>
+      <td>#{{ t.pr_number }}</td>
+      <td><span class="badge status-{{ t.status }}">{{ t.status }}</span></td>
+      <td>{{ t.score if t.score is not none else '-' }}</td>
+      <td>{{ t.risk_level or '-' }}</td>
+      <td>{{ (t.duration_ms / 1000) | round(1) ~ 's' if t.duration_ms else '-' }}</td>
+      <td class="text-muted small">{{ t.created_at[:19] }}</td>
+    </tr>
+  {% else %}
+    <tr><td colspan="8" class="text-muted">暂无任务</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.getElementById('submit-btn').onclick = async () => {
+  const prUrl = document.getElementById('pr-url').value.trim();
+  const writeBack = document.getElementById('write-back').checked;
+  const msg = document.getElementById('submit-msg');
+  if (!prUrl) { msg.textContent = '请输入 PR 地址'; return; }
+  track('review_start', {pr_url: prUrl});
+  const resp = await fetch('/api/review', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({pr_url: prUrl, write_back: writeBack}),
+  });
+  const data = await resp.json();
+  msg.textContent = data.ok ? data.msg : ('失败: ' + data.error);
+  if (data.ok) setTimeout(() => location.reload(), 1500);
+};
+document.querySelectorAll('.task-row').forEach(row => {
+  row.style.cursor = 'pointer';
+  row.onclick = () => location.href = '/task/' + row.dataset.id;
+});
+// 有运行中任务时自动刷新
+if ([...document.querySelectorAll('.badge')].some(b =>
+    ['pending', 'running'].includes(b.textContent))) {
+  setTimeout(() => location.reload(), 5000);
+}
+</script>
+{% endblock %}

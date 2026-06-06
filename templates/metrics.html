@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}QoS Dashboard - AI PR Review{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4>QoS Dashboard</h4>
+  <button id="refresh-btn" class="btn btn-sm btn-outline-primary">刷新</button>
+</div>
+
+<div class="row" id="metric-cards">
+  <div class="col-md-3"><div class="card mb-3"><div class="card-body">
+    <h6 class="text-muted">Review 指标</h6>
+    <div>分析次数: <b data-k="review.total">{{ data.review.total }}</b></div>
+    <div>成功率: <b data-k="review.success_rate">{{ (data.review.success_rate * 100) | round(1) }}%</b></div>
+    <div>平均耗时: <b data-k="review.avg_duration_ms">{{ data.review.avg_duration_ms }}ms</b></div>
+    <div>P95: <b data-k="review.p95_duration_ms">{{ data.review.p95_duration_ms }}ms</b></div>
+    <div>P99: <b data-k="review.p99_duration_ms">{{ data.review.p99_duration_ms }}ms</b></div>
+  </div></div></div>
+  <div class="col-md-3"><div class="card mb-3"><div class="card-body">
+    <h6 class="text-muted">AI 指标</h6>
+    <div>调用次数: <b>{{ data.ai.calls }}</b></div>
+    <div>Token: <b>in {{ data.ai.input_tokens }} / out {{ data.ai.output_tokens }}</b></div>
+    <div>平均耗时: <b>{{ data.ai.avg_duration_ms }}ms</b></div>
+    <div>失败率: <b>{{ (data.ai.failure_rate * 100) | round(1) }}%</b></div>
+    {% for m, r in data.ai.model_success_rate.items() %}
+    <div class="small">{{ m }}: {{ (r * 100) | round(1) }}%</div>
+    {% endfor %}
+  </div></div></div>
+  <div class="col-md-3"><div class="card mb-3"><div class="card-body">
+    <h6 class="text-muted">误报指标</h6>
+    <div>Issue 数量: <b>{{ data.issue.issues }}</b></div>
+    <div>用户采纳数: <b>{{ data.issue.adopted }}</b></div>
+    <div>采纳率: <b>{{ (data.issue.adoption_rate * 100) | round(1) }}%</b></div>
+    <div>误报率: <b>{{ (data.issue.false_positive_rate * 100) | round(1) }}%</b></div>
+  </div></div></div>
+  <div class="col-md-3"><div class="card mb-3"><div class="card-body">
+    <h6 class="text-muted">GitHub 指标</h6>
+    <div>回写成功率: <b>{{ (data.github.writeback_success_rate * 100) | round(1) }}%</b></div>
+    <div>Review 成功率: <b>{{ (data.github.review_success_rate * 100) | round(1) }}%</b></div>
+    <div>拉取成功率: <b>{{ (data.github.fetch_success_rate * 100) | round(1) }}%</b></div>
+    <div>Webhook 成功率: <b>{{ (data.github.webhook_success_rate * 100) | round(1) }}%</b></div>
+  </div></div></div>
+</div>
+
+<h5>埋点事件</h5>
+<table class="table table-sm bg-white w-auto">
+  <thead><tr><th>事件</th><th>次数</th></tr></thead>
+  <tbody>
+  {% for e, n in data.events.items() %}
+    <tr><td><code>{{ e }}</code></td><td>{{ n }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+<h5 class="mt-4">近期任务</h5>
+<table class="table table-sm bg-white">
+  <thead><tr><th>ID</th><th>仓库</th><th>PR</th><th>状态</th><th>评分</th><th>风险</th></tr></thead>
+  <tbody>
+  {% for t in data.recent_tasks %}
+    <tr>
+      <td><a href="/task/{{ t.id }}">{{ t.id }}</a></td>
+      <td>{{ t.repo }}</td><td>#{{ t.pr_number }}</td>
+      <td><span class="badge status-{{ t.status }}">{{ t.status }}</span></td>
+      <td>{{ t.score if t.score is not none else '-' }}</td>
+      <td>{{ t.risk_level or '-' }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.getElementById('refresh-btn').onclick = async () => {
+  track('dashboard_refresh', {});
+  await fetch('/api/metrics');
+  location.reload();
+};
+</script>
+{% endblock %}

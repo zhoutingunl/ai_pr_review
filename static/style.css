@@ -1,0 +1,15 @@
+.status-pending { background-color: #6c757d; }
+.status-running { background-color: #0d6efd; }
+.status-success { background-color: #198754; }
+.status-failed  { background-color: #dc3545; }
+
+.level-P0 { background-color: #dc3545; }
+.level-P1 { background-color: #fd7e14; }
+.level-P2 { background-color: #ffc107; color: #333; }
+.level-P3 { background-color: #0dcaf0; color: #333; }
+
+.report-pre {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 0.85rem;
+}

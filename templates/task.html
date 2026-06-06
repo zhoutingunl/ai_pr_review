@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% block title %}任务 #{{ task.id }} - AI PR Review{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4>任务 #{{ task.id }} · {{ task.repo }} #{{ task.pr_number }}</h4>
+  <a class="btn btn-sm btn-outline-secondary" href="{{ task.pr_url }}" target="_blank">打开 PR ↗</a>
+</div>
+
+<div class="row mb-4">
+  <div class="col"><div class="card text-center"><div class="card-body">
+    <div class="text-muted small">状态</div>
+    <span class="badge status-{{ task.status }} fs-6">{{ task.status }}</span>
+  </div></div></div>
+  <div class="col"><div class="card text-center"><div class="card-body">
+    <div class="text-muted small">综合评分</div>
+    <div class="fs-4">{{ task.score if task.score is not none else '-' }}</div>
+  </div></div></div>
+  <div class="col"><div class="card text-center"><div class="card-body">
+    <div class="text-muted small">风险等级</div>
+    <div class="fs-4">{{ task.risk_level or '-' }}</div>
+  </div></div></div>
+  <div class="col"><div class="card text-center"><div class="card-body">
+    <div class="text-muted small">耗时</div>
+    <div class="fs-4">{{ (task.duration_ms / 1000) | round(1) ~ 's' if task.duration_ms else '-' }}</div>
+  </div></div></div>
+</div>
+
+{% if task.error %}
+<div class="alert alert-danger">失败原因: {{ task.error }}</div>
+{% endif %}
+
+<h5>发现问题（{{ issues | length }} 条）</h5>
+<table class="table bg-white">
+  <thead><tr>
+    <th>等级</th><th>维度</th><th>位置</th><th>问题</th>
+    <th>置信度</th><th>采纳标注</th>
+  </tr></thead>
+  <tbody>
+  {% for i in issues %}
+    <tr>
+      <td><span class="badge level-{{ i.level }}">{{ i.level }}</span></td>
+      <td>{{ i.category }}</td>
+      <td><code>{{ i.file }}{{ ':' ~ i.line if i.line }}</code></td>
+      <td>{{ i.message }}
+        {% if i.suggestion %}<div class="text-muted small">建议: {{ i.suggestion }}</div>{% endif %}
+        {% if i.fix_patch %}<pre class="small bg-light p-2 mt-1">{{ i.fix_patch }}</pre>{% endif %}
+      </td>
+      <td>{{ '%.2f' | format(i.confidence) }}</td>
+      <td>
+        <div class="btn-group btn-group-sm" data-issue="{{ i.id }}">
+          <button class="btn btn-outline-success adopt-btn {{ 'active' if i.adopted == 1 }}"
+                  data-adopted="1">采纳</button>
+          <button class="btn btn-outline-danger adopt-btn {{ 'active' if i.adopted == 0 }}"
+                  data-adopted="0">误报</button>
+        </div>
+      </td>
+    </tr>
+  {% else %}
+    <tr><td colspan="6" class="text-muted">无</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+<h5 class="mt-4">评审报告</h5>
+{% for c in comments %}
+<div class="card mb-3"><div class="card-body">
+  <pre class="report-pre mb-0">{{ c.comment }}</pre>
+</div></div>
+{% else %}
+<p class="text-muted">暂无报告</p>
+{% endfor %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.querySelectorAll('.adopt-btn').forEach(btn => {
+  btn.onclick = async () => {
+    const group = btn.closest('[data-issue]');
+    const adopted = btn.dataset.adopted === '1';
+    await fetch('/api/issue/' + group.dataset.issue + '/adopt', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({adopted}),
+    });
+    track(adopted ? 'issue_adopted' : 'issue_rejected',
+          {issue_id: group.dataset.issue});
+    group.querySelectorAll('.adopt-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+  };
+});
+{% if task.status in ('pending', 'running') %}
+setTimeout(() => location.reload(), 5000);
+{% endif %}
+</script>
+{% endblock %}
