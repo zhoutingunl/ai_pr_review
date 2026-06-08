@@ -109,6 +109,9 @@ class Store:
         self.db_path_ = db_path or CONFIG.db_path
         os.makedirs(os.path.dirname(self.db_path_), exist_ok=True)
         self.lock_ = threading.Lock()
+        # 实时进度（内存态，高频更新不落库）：task_id -> {stage, model, stream}
+        self.progress_ = {}
+        self.progress_lock_ = threading.Lock()
         self.conn_ = sqlite3.connect(self.db_path_, check_same_thread=False)
         self.conn_.row_factory = sqlite3.Row
         self.conn_.execute("PRAGMA journal_mode=WAL")
@@ -239,6 +242,35 @@ class Store:
 
     def list_github_metrics(self) -> list[dict]:
         return self._query("SELECT * FROM github_metric ORDER BY id DESC")
+
+    # ---------- 实时进度（内存态） ----------
+
+    _PROGRESS_CAP = 12000   # 流式片段最多保留的字符数（防无界增长）
+
+    def set_progress(self, task_id: int, stage: str | None = None,
+                     model: str | None = None, stream: str | None = None,
+                     append: str | None = None) -> None:
+        """更新任务实时进度。stream 置空字符串可清空已展示片段。"""
+        with self.progress_lock_:
+            p = self.progress_.setdefault(
+                task_id, {"stage": "", "model": "", "stream": ""})
+            if stage is not None:
+                p["stage"] = stage
+            if model is not None:
+                p["model"] = model
+            if stream is not None:
+                p["stream"] = stream[-self._PROGRESS_CAP:]
+            if append:
+                p["stream"] = (p["stream"] + append)[-self._PROGRESS_CAP:]
+
+    def get_progress(self, task_id: int) -> dict:
+        with self.progress_lock_:
+            p = self.progress_.get(task_id)
+            return dict(p) if p else {"stage": "", "model": "", "stream": ""}
+
+    def clear_progress(self, task_id: int) -> None:
+        with self.progress_lock_:
+            self.progress_.pop(task_id, None)
 
     # ---------- 埋点 ----------
 

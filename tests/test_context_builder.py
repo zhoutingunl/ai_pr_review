@@ -154,6 +154,18 @@ def test_context_to_prompt():
     assert "app/service.py" in prompt
 
 
+def test_context_to_prompt_lean():
+    ctx = ContextBuilder(make_github()).build("o", "r", 1)
+    lean = context_to_prompt(ctx, lean=True)
+    # 精简模式保留 PR 信息与一级 Diff，丢弃二/三/四级
+    assert "一级上下文" in lean and "app/service.py" in lean
+    assert "二级上下文" not in lean
+    assert "三级上下文" not in lean
+    assert "四级上下文" not in lean
+    # 精简后应短于全量
+    assert len(lean) < len(context_to_prompt(ctx))
+
+
 def test_context_to_prompt_truncation():
     ctx = ContextBuilder(make_github()).build("o", "r", 1)
     prompt = context_to_prompt(ctx, max_chars=100)

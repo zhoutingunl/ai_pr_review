@@ -34,9 +34,11 @@ _DEFAULTS = {
         "fix": {"primary": "kimi-k2.5", "fallback": ["glm-5.1", "MiniMax-M3"]},
     },
 
-    # AI 调用控制
-    "ai_timeout": 600,             # 单轮总时长预算（秒）
-    "ai_first_event_timeout": 240,  # 首事件看门狗（秒）；大 prompt 下推理模型首 token 可能超过 1 分钟
+    # AI 调用控制（看门狗策略见 ai_service._read_stream 注释）
+    # 只在「真卡死」时干预：正在持续吐字的模型不限时长。
+    "ai_no_progress_timeout": 420,  # 距上次新 token 超此值仍无新输出 = 卡死，换模型
+    "ai_stall_timeout": 90,         # 连接静默上限（秒）：read timeout，无任何字节即断流
+    "ai_timeout": 3600,             # 总时长硬上限（秒）：极大，仅防跑飞兜底
 
     # 误报控制
     "confidence_threshold": 0.70,

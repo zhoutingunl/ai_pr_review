@@ -29,6 +29,24 @@
 <div class="alert alert-danger">失败原因: {{ task.error }}</div>
 {% endif %}
 
+{% if task.status in ('pending', 'running') %}
+<div class="card mb-4 border-primary" id="live-card">
+  <div class="card-body">
+    <div class="d-flex align-items-center mb-2">
+      <div class="spinner-border spinner-border-sm text-primary me-2" role="status"></div>
+      <strong id="live-stage">正在准备…</strong>
+      <span id="live-model" class="badge bg-secondary ms-2" style="display:none"></span>
+      <span id="live-elapsed" class="text-muted small ms-auto"></span>
+    </div>
+    <pre id="live-stream" class="report-pre mb-0 bg-light p-2 rounded"
+         style="max-height:340px; overflow:auto; min-height:2rem;"></pre>
+    <div id="live-thinking" class="text-muted small mt-2" style="display:none">
+      模型思考中，首次输出可能需要 1–3 分钟，请稍候…
+    </div>
+  </div>
+</div>
+{% endif %}
+
 <h5>发现问题（{{ issues | length }} 条）</h5>
 <table class="table bg-white">
   <thead><tr>
@@ -88,7 +106,51 @@ document.querySelectorAll('.adopt-btn').forEach(btn => {
   };
 });
 {% if task.status in ('pending', 'running') %}
-setTimeout(() => location.reload(), 5000);
+// 实时进度：轮询展示模型思考/输出过程，完成后加载最终报告
+(function () {
+  const taskId = {{ task.id }};
+  const startedAt = Date.now();
+  const stageEl = document.getElementById('live-stage');
+  const modelEl = document.getElementById('live-model');
+  const streamEl = document.getElementById('live-stream');
+  const elapsedEl = document.getElementById('live-elapsed');
+  const thinkingEl = document.getElementById('live-thinking');
+
+  function fmt(ms) {
+    const s = Math.floor(ms / 1000);
+    return s < 60 ? s + ' 秒' : Math.floor(s / 60) + ' 分 ' + (s % 60) + ' 秒';
+  }
+
+  async function poll() {
+    elapsedEl.textContent = '已用时 ' + fmt(Date.now() - startedAt);
+    let data;
+    try {
+      const resp = await fetch('/api/task/' + taskId + '/progress');
+      data = await resp.json();
+    } catch (e) { setTimeout(poll, 2000); return; }
+    if (!data.ok) { setTimeout(poll, 2000); return; }
+
+    if (data.status === 'success' || data.status === 'failed') {
+      stageEl.textContent = '完成，正在加载报告…';
+      location.reload();
+      return;
+    }
+    if (data.stage) stageEl.textContent = data.stage;
+    if (data.model) { modelEl.textContent = data.model; modelEl.style.display = ''; }
+    else { modelEl.style.display = 'none'; }
+
+    const atBottom = streamEl.scrollHeight - streamEl.scrollTop
+                     - streamEl.clientHeight < 40;
+    streamEl.textContent = data.stream || '';
+    if (atBottom) streamEl.scrollTop = streamEl.scrollHeight;
+    // 已进入某个 AI 阶段但还没有任何输出 = 模型思考中
+    thinkingEl.style.display =
+      (data.stage && data.stage.indexOf('AI') === 0 && !data.stream)
+        ? '' : 'none';
+    setTimeout(poll, 1500);
+  }
+  poll();
+})();
 {% endif %}
 </script>
 {% endblock %}

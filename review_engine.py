@@ -121,26 +121,38 @@ class ReviewEngine:
             self.store_.record_event("review_failed", {"task_id": task_id,
                                                        "error": str(e)[:300]})
             raise
+        finally:
+            # 任务结束（成功/失败）：清理实时进度，前端转而展示最终报告
+            self.store_.clear_progress(task_id)
 
     # ---------- 流水线 ----------
 
     def _run_pipeline(self, task_id: int, owner: str, repo: str, number: int,
                       write_back: bool, max_fixes: int) -> dict:
         # 上下文（一~四级）
+        self.store_.set_progress(task_id, stage="拉取 PR 与构建上下文…",
+                                 stream="")
         self.store_.record_event("github_fetch", {"task_id": task_id})
         ctx = self.context_.build(owner, repo, number, task_id=task_id)
+        # summary 用全量上下文（含二/三/四级）；review 用精简上下文，
+        # 避免大 PR 全量上下文让推理模型长时间空转（见 context_to_prompt 注释）
         prompt_ctx = context_to_prompt(ctx)
+        review_ctx = context_to_prompt(ctx, lean=True)
 
         # 规则引擎
         rule_findings = self.detector_.detect(ctx["files"])
 
         # LLM 总结
+        self.store_.set_progress(task_id, stage="AI 总结变更中…", stream="")
         self.store_.record_event("ai_summary", {"task_id": task_id})
-        summary = self._ai_summary(prompt_ctx, task_id)
+        summary = self._ai_summary(prompt_ctx, task_id,
+                                   self._progress_cb(task_id))
 
         # LLM 评审
+        self.store_.set_progress(task_id, stage="AI 评审风险中…", stream="")
         self.store_.record_event("ai_review", {"task_id": task_id})
-        llm_result = self._ai_review(prompt_ctx, rule_findings, task_id)
+        llm_result = self._ai_review(review_ctx, rule_findings, task_id,
+                                     self._progress_cb(task_id))
 
         # 一致性检查 + 阈值过滤
         issues = self._consistency_check(rule_findings, llm_result)
@@ -160,9 +172,13 @@ class ReviewEngine:
             issue["id"] = iid
 
         # AI 修复建议（P0/P1 取前 N 条）
+        if [i for i in issues if i["level"] in ("P0", "P1")][:max_fixes]:
+            self.store_.set_progress(task_id, stage="AI 生成修复建议…",
+                                     stream="")
         fixes = self._generate_fixes(ctx, issues, task_id, max_fixes)
 
         # 报告
+        self.store_.set_progress(task_id, stage="生成评审报告…", stream="")
         report = self.reporter_.generate(ctx, summary, issues, fixes, score,
                                          risk_level, category_scores)
         self.store_.add_comment(task_id, report)
@@ -183,9 +199,21 @@ class ReviewEngine:
 
     # ---------- AI 调用 ----------
 
-    def _ai_summary(self, prompt_ctx: str, task_id: int) -> dict:
+    def _progress_cb(self, task_id: int):
+        """构造流式回调：把模型增量输出实时写入任务进度。
+
+        text=None 表示新模型开始（故障转移）：清空已展示片段并标注模型名。
+        """
+        def cb(text, model):
+            if text is None:
+                self.store_.set_progress(task_id, model=model, stream="")
+            else:
+                self.store_.set_progress(task_id, append=text)
+        return cb
+
+    def _ai_summary(self, prompt_ctx: str, task_id: int, on_token=None) -> dict:
         text = self.ai_.summarize(_SUMMARY_PROMPT.format(context=prompt_ctx),
-                                  task_id=task_id)
+                                  task_id=task_id, on_token=on_token)
         try:
             data = extract_json(text)
         except AIError:
@@ -198,14 +226,15 @@ class ReviewEngine:
         return data
 
     def _ai_review(self, prompt_ctx: str, rule_findings: list[dict],
-                   task_id: int) -> dict:
+                   task_id: int, on_token=None) -> dict:
         findings_text = json.dumps(
             [{k: f[k] for k in ("rule", "category", "level", "file", "line",
                                 "confidence", "message")}
              for f in rule_findings], ensure_ascii=False, indent=1) or "[]"
         text = self.ai_.review(
             _REVIEW_PROMPT.format(rule_findings=findings_text,
-                                  context=prompt_ctx), task_id=task_id)
+                                  context=prompt_ctx),
+            task_id=task_id, on_token=on_token)
         try:
             data = extract_json(text)
         except AIError:
@@ -231,7 +260,7 @@ class ReviewEngine:
                                        line=issue.get("line", "?"),
                                        message=issue["message"],
                                        snippet=snippet),
-                    task_id=task_id)
+                    task_id=task_id, on_token=self._progress_cb(task_id))
                 data = extract_json(text)
             except AIError:
                 continue

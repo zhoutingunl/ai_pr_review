@@ -93,6 +93,22 @@ class ReviewWebApp:
             return jsonify({"ok": True,
                             "tasks": self.store_.list_tasks(limit=50)})
 
+        @app.get("/api/task/<int:task_id>/progress")
+        def task_progress_api(task_id: int):
+            """实时进度：当前阶段 + 模型 + 流式片段 + 任务状态。
+
+            前端在任务运行期间轮询此接口展示模型「思考/输出」过程，
+            状态变为 success/failed 后改为加载最终报告。
+            """
+            task = self.store_.get_task(task_id)
+            if not task:
+                return jsonify({"ok": False, "error": "任务不存在"}), 404
+            progress = self.store_.get_progress(task_id)
+            return jsonify({"ok": True, "status": task["status"],
+                            "stage": progress["stage"],
+                            "model": progress["model"],
+                            "stream": progress["stream"]})
+
         @app.post("/api/issue/<int:issue_id>/adopt")
         def adopt_issue(issue_id: int):
             issue = self.store_.get_issue(issue_id)

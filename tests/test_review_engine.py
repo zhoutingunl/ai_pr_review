@@ -70,6 +70,40 @@ def test_run_success_with_writeback(store):
         assert store.count_events(event) == 1, event
 
 
+def test_run_streams_progress_and_clears(store):
+    """运行中把模型增量输出写入进度；结束后清理进度。"""
+    engine, gh, _, ai = make_engine(store)
+
+    # 让 summarize 通过 on_token 回调推送流式片段
+    def fake_summarize(prompt, task_id=None, on_token=None):
+        if on_token:
+            on_token(None, "kimi-k2.5")   # 模型开始
+            on_token("总", "kimi-k2.5")
+            on_token("结", "kimi-k2.5")
+            # 回调期间进度应可见
+            p = store.get_progress(task_id)
+            assert p["model"] == "kimi-k2.5" and p["stream"] == "总结"
+        import json as _json
+        return _json.dumps({"overview": "o", "modules": [], "risk_level": "P2"})
+
+    ai.summarize.side_effect = fake_summarize
+    result = engine.run("https://github.com/o/r/pull/20")
+    assert result["status"] == "success"
+    # 结束后进度被清理
+    assert store.get_progress(result["task_id"]) == {
+        "stage": "", "model": "", "stream": ""}
+
+
+def test_run_clears_progress_on_failure(store):
+    engine, _, cb, _ = make_engine(store)
+    cb.build.side_effect = RuntimeError("拉取失败")
+    with pytest.raises(RuntimeError):
+        engine.run("https://github.com/o/r/pull/21")
+    task = store.list_tasks()[0]
+    assert store.get_progress(task["id"]) == {
+        "stage": "", "model": "", "stream": ""}
+
+
 def test_run_clean_pr_approve(store):
     engine, gh, cb, _ = make_engine(store)
     ctx = make_ctx()

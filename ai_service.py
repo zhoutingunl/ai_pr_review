@@ -62,22 +62,31 @@ class AIService:
         self.base_ = (base or CONFIG.hermes_base_).rstrip("/")
         self.store_ = store
         self.models_ = models if models is not None else CONFIG.models
-        self.timeout_ = int(CONFIG.get("ai_timeout", 300))
-        self.first_event_timeout_ = int(CONFIG.get("ai_first_event_timeout", 60))
+        # 无进展上限（秒）：距上次新 token 超过此值仍无新输出 = 卡死，故障转移。
+        # 只要模型在持续吐字就不会触发——即便总时长很长也照常进行。
+        # 首 token 前 last_progress=start，故该值也兼作「首 token 最长等待」。
+        self.no_progress_timeout_ = int(CONFIG.get("ai_no_progress_timeout", 420))
+        # 连接静默上限（秒）：read timeout，超过此值无任何字节（含心跳）判断断流
+        self.stall_timeout_ = int(CONFIG.get("ai_stall_timeout", 90))
+        # 总时长硬上限（秒）：仅防跑飞兜底，设得很大；正常不应由它触发
+        self.timeout_ = int(CONFIG.get("ai_timeout", 3600))
 
     # ---------- 对外能力 ----------
 
-    def summarize(self, prompt: str, task_id: int | None = None) -> str:
+    def summarize(self, prompt: str, task_id: int | None = None,
+                  on_token=None) -> str:
         """PR 总结 / Commit 总结。"""
-        return self._ask_with_fallback("summary", prompt, task_id)
+        return self._ask_with_fallback("summary", prompt, task_id, on_token)
 
-    def review(self, prompt: str, task_id: int | None = None) -> str:
+    def review(self, prompt: str, task_id: int | None = None,
+               on_token=None) -> str:
         """Review / 风险分析。"""
-        return self._ask_with_fallback("review", prompt, task_id)
+        return self._ask_with_fallback("review", prompt, task_id, on_token)
 
-    def generate_fix(self, prompt: str, task_id: int | None = None) -> str:
+    def generate_fix(self, prompt: str, task_id: int | None = None,
+                     on_token=None) -> str:
         """自动修复建议（Patch + Commit 建议）。"""
-        return self._ask_with_fallback("fix", prompt, task_id)
+        return self._ask_with_fallback("fix", prompt, task_id, on_token)
 
     # ---------- 模型调度 ----------
 
@@ -87,8 +96,12 @@ class AIService:
         return [m for m in chain if m]
 
     def _ask_with_fallback(self, role: str, prompt: str,
-                           task_id: int | None = None) -> str:
-        """按 fallback 链依次尝试；429/卡死/异常切下一个模型（跨 plan）。"""
+                           task_id: int | None = None, on_token=None) -> str:
+        """按 fallback 链依次尝试；429/卡死/异常切下一个模型（跨 plan）。
+
+        on_token(text, model): 每个增量 token 回调，用于把模型输出实时推到界面。
+        切换模型时上层可据此重置已展示的片段。
+        """
         chain = self._role_models(role)
         if not chain:
             raise AIError(f"角色 {role} 未配置模型")
@@ -96,7 +109,7 @@ class AIService:
         for model in chain:
             started = time.time()
             try:
-                text, usage = self._ask_once(prompt, model)
+                text, usage = self._ask_once(prompt, model, on_token)
                 self._record(role, model, True, started, usage, task_id)
                 return text
             except Exception as e:  # noqa: BLE001 - 任一失败都尝试下一模型
@@ -132,40 +145,67 @@ class AIService:
         except requests.RequestException:
             pass
 
-    def _ask_once(self, prompt: str, model: str) -> tuple[str, dict]:
+    def _ask_once(self, prompt: str, model: str,
+                  on_token=None) -> tuple[str, dict]:
         """单模型一轮对话：session/new -> chat/start -> SSE 读流。
 
         返回 (全文, {input_tokens, output_tokens})。
+        on_token(text, model): 增量 token 回调。
         """
         session_id = self._post("/api/session/new",
                                 {"model": model})["session"]["session_id"]
+        if on_token:
+            # 通知上层：新模型开始（用于重置界面上的流式片段）
+            try:
+                on_token(None, model)
+            except Exception:  # noqa: BLE001 - 回调异常不影响主流程
+                pass
         try:
             stream_id = self._post(
                 "/api/chat/start",
                 {"session_id": session_id, "message": prompt, "model": model},
             )["stream_id"]
-            return self._read_stream(session_id, stream_id)
+            return self._read_stream(session_id, stream_id, model, on_token)
         except Exception:
             self._cancel(session_id)
             raise
 
-    def _read_stream(self, session_id: str, stream_id: str) -> tuple[str, dict]:
+    def _read_stream(self, session_id: str, stream_id: str, model: str = "",
+                     on_token=None) -> tuple[str, dict]:
+        """读取 SSE 流。
+
+        看门狗策略（务必看 hermes_webui 踩坑记录）：
+        Hermes 在模型「思考」阶段会每 2~3 秒发一个空行心跳，连接其实活着，
+        只是推理模型首 token 延迟可达 100~300 秒，且大 PR 输出可能持续很久。
+        因此只在「真卡死」时才干预，正在持续吐字的模型不限时长：
+          * 无进展看门狗：以「距上次新 token」为准。持续输出 -> 一直不触发；
+            心跳不断却长时间(no_progress_timeout)无任何新 token -> 判卡死并转移
+            （首 token 前以会话开始计时，故也兼作首 token 最长等待）；
+          * 连接静默：完全收不到字节(含心跳) stall_timeout 秒 -> read timeout 断流；
+          * 总时长：极大的硬上限，仅防跑飞兜底，正常不触发。
+        """
         full, usage, event = [], {}, ""
-        deadline = time.time() + self.timeout_
-        first_event_deadline = time.time() + self.first_event_timeout_
-        got_event = False
+        start = time.time()
+        hard_cap = start + self.timeout_
+        last_progress = start   # 上次「新 token」时间；首 token 前即会话开始时间
+        got_token = False
+        # 连接静默（stall_timeout 内无任何字节，含心跳）由 requests 读超时负责，
+        # 触发 ReadTimeout -> 上层捕获 -> 作废会话并故障转移
         with requests.get(f"{self.base_}/api/chat/stream",
                           params={"stream_id": stream_id},
-                          stream=True, timeout=(15, 120)) as resp:
+                          stream=True,
+                          timeout=(15, self.stall_timeout_)) as resp:
             if resp.status_code == 429:
                 raise AIRateLimited("429 限流: chat/stream")
             resp.raise_for_status()
             for raw in resp.iter_lines():
                 now = time.time()
-                if now > deadline:
-                    raise AIError("AI 调用超时（总时长预算耗尽）")
-                if not got_event and now > first_event_deadline:
-                    raise AIError("AI 调用卡死（首事件看门狗超时）")
+                if now > hard_cap:
+                    raise AIError("AI 调用超时（总时长硬上限，疑似跑飞）")
+                # 心跳在到达（连接活着）但长时间没有新 token：判卡死，故障转移
+                if now - last_progress > self.no_progress_timeout_:
+                    raise AIError(
+                        f"AI 调用卡死（{self.no_progress_timeout_}秒无新输出）")
                 if not raw:
                     continue
                 line = raw.decode("utf-8")
@@ -179,10 +219,18 @@ class AIService:
                 except json.JSONDecodeError:
                     continue
                 if event == "token":
-                    got_event = True
-                    full.append(data.get("text", ""))
+                    got_token = True
+                    last_progress = now   # 有新输出，刷新无进展计时
+                    text = data.get("text", "")
+                    full.append(text)
+                    if on_token and text:
+                        try:
+                            on_token(text, model)
+                        except Exception:  # noqa: BLE001 - 回调异常不影响主流程
+                            pass
                 elif event == "tool":
-                    got_event = True
+                    got_token = True
+                    last_progress = now
                 elif event == "approval":
                     # 纯文本问答一般不触发；兜底立即批准防卡死
                     try:

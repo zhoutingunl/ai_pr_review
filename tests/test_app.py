@@ -74,6 +74,18 @@ def test_tasks_api(client, store):
     assert len(client.get("/api/tasks").get_json()["tasks"]) == 1
 
 
+def test_task_progress_api(client, store):
+    tid = store.create_task("a/b", 1)
+    store.update_task(tid, status="running")
+    store.set_progress(tid, stage="AI 评审风险中…", model="glm-5.1",
+                       append="发现")
+    data = client.get(f"/api/task/{tid}/progress").get_json()
+    assert data["ok"] and data["status"] == "running"
+    assert data["stage"] == "AI 评审风险中…" and data["model"] == "glm-5.1"
+    assert data["stream"] == "发现"
+    assert client.get("/api/task/999/progress").status_code == 404
+
+
 def test_adopt_issue(client, store):
     tid = store.create_task("a/b", 1)
     iid = store.add_issue(tid, "P1", "style", "a.py", 1, 0.8, "m")

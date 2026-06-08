@@ -156,7 +156,10 @@ def test_stream_429_error_event():
             captured.append(e)
             raise
 
-    svc._ask_once = spy
+    def spy2(prompt, model, on_token=None):
+        return spy(prompt, model)
+
+    svc._ask_once = spy2
     with patch("ai_service.requests.post", side_effect=ok_post(None)), \
          patch("ai_service.requests.get",
                return_value=FakeStreamResp(lines)):
@@ -208,15 +211,71 @@ def test_stream_deadline_exceeded():
             svc.summarize("q")
 
 
-def test_first_event_watchdog():
+def test_no_progress_watchdog_trips():
     svc = make_service()
-    svc.first_event_timeout_ = -1  # 看门狗立即触发
+    svc.no_progress_timeout_ = -1  # 任何无新 token 的间隔都判卡死
     lines = sse("done", {"session": {}})
     with patch("ai_service.requests.post", side_effect=ok_post(None)), \
          patch("ai_service.requests.get",
                return_value=FakeStreamResp(lines)):
         with pytest.raises(AIError, match="所有模型均失败"):
             svc.summarize("q")
+
+
+def test_streaming_long_output_not_killed():
+    """持续吐字的模型即使 token 很多也不被无进展看门狗杀掉。"""
+    svc = make_service()
+    svc.no_progress_timeout_ = 0.5  # 很短，但每个 token 都刷新进展
+    lines = []
+    for i in range(50):
+        lines += sse("token", {"text": f"t{i}"})
+    lines += sse("done", {"session": {"input_tokens": 1, "output_tokens": 50}})
+    with patch("ai_service.requests.post", side_effect=ok_post(None)), \
+         patch("ai_service.requests.get",
+               return_value=FakeStreamResp(lines)):
+        out = svc.summarize("q")
+    assert out.startswith("t0") and out.endswith("t49")
+
+
+def test_on_token_callback_receives_stream():
+    svc = make_service()
+    received = []
+    lines = (sse("token", {"text": "你"}) + sse("token", {"text": "好"})
+             + sse("done", {"session": {}}))
+    with patch("ai_service.requests.post", side_effect=ok_post(None)), \
+         patch("ai_service.requests.get",
+               return_value=FakeStreamResp(lines)):
+        svc.summarize("q", on_token=lambda text, model: received.append((text, model)))
+    # 首元素是模型开始信号 (None, model)，其后是增量 token
+    assert received[0] == (None, "m1")
+    assert ("你", "m1") in received and ("好", "m1") in received
+
+
+def test_on_token_callback_exception_swallowed():
+    svc = make_service()
+    lines = sse("token", {"text": "x"}) + sse("done", {"session": {}})
+
+    def boom(text, model):
+        raise ValueError("回调炸了")
+
+    with patch("ai_service.requests.post", side_effect=ok_post(None)), \
+         patch("ai_service.requests.get",
+               return_value=FakeStreamResp(lines)):
+        assert svc.summarize("q", on_token=boom) == "x"  # 回调异常不影响主流程
+
+
+def test_heartbeat_blank_lines_do_not_trip_watchdog():
+    """空行心跳不应触发看门狗：心跳穿插后仍能正常收到 token 与 done。"""
+    svc = make_service()
+    # 模拟思考阶段的若干空行心跳，随后才出 token
+    lines = ([""] * 5 + sse("token", {"text": "终"})
+             + [""] * 3 + sse("token", {"text": "于"})
+             + sse("done", {"session": {"input_tokens": 1,
+                                        "output_tokens": 2}}))
+    with patch("ai_service.requests.post", side_effect=ok_post(None)), \
+         patch("ai_service.requests.get",
+               return_value=FakeStreamResp(lines)):
+        assert svc.summarize("q") == "终于"
 
 
 def test_role_not_configured():

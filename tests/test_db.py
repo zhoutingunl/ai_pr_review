@@ -62,6 +62,28 @@ def test_metrics_tables(store):
     assert store.list_github_metrics()[0]["operation"] == "fetch"
 
 
+def test_progress(store):
+    # 初始为空
+    assert store.get_progress(1) == {"stage": "", "model": "", "stream": ""}
+    store.set_progress(1, stage="评审中", model="glm-5.1")
+    store.set_progress(1, append="你")
+    store.set_progress(1, append="好")
+    p = store.get_progress(1)
+    assert p["stage"] == "评审中" and p["model"] == "glm-5.1"
+    assert p["stream"] == "你好"
+    # stream 置空清空片段（故障转移场景）
+    store.set_progress(1, stream="")
+    assert store.get_progress(1)["stream"] == ""
+    # 清理
+    store.clear_progress(1)
+    assert store.get_progress(1) == {"stage": "", "model": "", "stream": ""}
+
+
+def test_progress_cap(store):
+    store.set_progress(2, append="a" * 20000)
+    assert len(store.get_progress(2)["stream"]) == store._PROGRESS_CAP
+
+
 def test_events(store):
     store.record_event("review_start", {"task_id": 1})
     store.record_event("review_start")

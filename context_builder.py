@@ -273,8 +273,15 @@ class ContextBuilder:
         return history[: self.history_limit_ * 2]
 
 
-def context_to_prompt(ctx: dict, max_chars: int = 60000) -> str:
-    """把上下文 bundle 压平成 LLM prompt 文本（带预算截断）。"""
+def context_to_prompt(ctx: dict, max_chars: int = 60000,
+                      lean: bool = False) -> str:
+    """把上下文 bundle 压平成 LLM prompt 文本（带预算截断）。
+
+    lean=True 时只保留 PR 信息 + Commit + 一级 Diff，丢弃二/三/四级上下文。
+    用于 review 调用：实测大 PR 全量上下文（含关联文件/调用链/历史）会让推理
+    模型陷入长时间空转、迟迟不吐首 token；精简后显著降低推理负担。summary
+    调用仍用全量上下文以保证总结质量。
+    """
     parts: list[str] = []
     pr = ctx["pr"]
     parts.append(
@@ -294,19 +301,20 @@ def context_to_prompt(ctx: dict, max_chars: int = 60000) -> str:
                           f"```diff\n{patch}\n```")
     parts.append("## 一级上下文: 变更 Diff\n" + "\n".join(diff_parts))
 
-    if ctx["related_files"]:
-        rel_parts = [f"### {p}\n```\n{t[:4000]}\n```"
-                     for p, t in ctx["related_files"].items()]
-        parts.append("## 二级上下文: 关联文件\n" + "\n".join(rel_parts))
+    if not lean:
+        if ctx["related_files"]:
+            rel_parts = [f"### {p}\n```\n{t[:4000]}\n```"
+                         for p, t in ctx["related_files"].items()]
+            parts.append("## 二级上下文: 关联文件\n" + "\n".join(rel_parts))
 
-    if ctx["call_chains"]:
-        parts.append("## 三级上下文: 调用链\n" + "\n".join(
-            f"- {c}" for c in ctx["call_chains"]))
+        if ctx["call_chains"]:
+            parts.append("## 三级上下文: 调用链\n" + "\n".join(
+                f"- {c}" for c in ctx["call_chains"]))
 
-    if ctx["history_comments"]:
-        parts.append("## 四级上下文: 历史 Review 评论\n" + "\n".join(
-            f"- [{h['scope']}] {h['path']}: {h['body'][:200]}"
-            for h in ctx["history_comments"]))
+        if ctx["history_comments"]:
+            parts.append("## 四级上下文: 历史 Review 评论\n" + "\n".join(
+                f"- [{h['scope']}] {h['path']}: {h['body'][:200]}"
+                for h in ctx["history_comments"]))
 
     text = "\n\n".join(parts)
     if len(text) > max_chars:

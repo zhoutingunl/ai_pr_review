@@ -1,0 +1,26 @@
+# 敏感信息
+.env
+config.json
+
+# 数据
+data/*.db
+data/*.db-wal
+data/*.db-shm
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.coverage
+htmlcov/
+coverage.xml
+*.egg-info/
+.venv/
+venv/
+
+# 系统
+.DS_Store
+
+# Claude Code 本地状态
+.claude/
