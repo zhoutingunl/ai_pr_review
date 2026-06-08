@@ -24,10 +24,41 @@ def fake_resp(status=200, json_data=None, text=""):
 def test_parse_pr_url():
     assert parse_pr_url("https://github.com/a/b/pull/12") == ("a", "b", 12)
     assert parse_pr_url("http://github.com/x.y/z-w/pull/3/") == ("x.y", "z-w", 3)
+    # GitHub Enterprise（任意 host）也应可解析
+    assert parse_pr_url("https://ghe.corp.com/team/svc/pull/9") == (
+        "team", "svc", 9)
     with pytest.raises(GithubError):
-        parse_pr_url("https://gitlab.com/a/b/pull/1")
+        parse_pr_url("https://github.com/a/b/issues/1")  # 非 pull 路径
     with pytest.raises(GithubError):
         parse_pr_url("随便的字符串")
+
+
+def test_api_base_for_url():
+    from github_client import api_base_for_url
+    assert api_base_for_url("https://github.com/a/b/pull/1") \
+        == "https://api.github.com"
+    # GHE host -> /api/v3
+    assert api_base_for_url("https://ghe.corp.com/a/b/pull/1") \
+        == "https://ghe.corp.com/api/v3"
+    # 解析失败回落默认
+    assert api_base_for_url("乱码").startswith("https://")
+
+
+def test_api_base_configurable():
+    # 默认走 api.github.com
+    assert GithubClient(token="t").api_base_ == "https://api.github.com"
+    # 构造参数覆盖（GHE）
+    c = GithubClient(token="t", api_base="https://ghe.corp.com/api/v3/")
+    assert c.api_base_ == "https://ghe.corp.com/api/v3"  # 末尾斜杠被去除
+
+
+def test_request_uses_configured_api_base(store):
+    c = GithubClient(token="t", store=store, api_base="https://ghe.corp.com/api/v3")
+    c.session_ = MagicMock()
+    c.session_.request.return_value = fake_resp(json_data={"title": "T"})
+    c.get_pull("a", "b", 1)
+    called_url = c.session_.request.call_args.args[1]
+    assert called_url.startswith("https://ghe.corp.com/api/v3/repos/a/b/pulls/1")
 
 
 def test_token_header():

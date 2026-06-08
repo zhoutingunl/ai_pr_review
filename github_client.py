@@ -19,10 +19,12 @@ import requests
 
 from config import CONFIG
 
-_API = "https://api.github.com"
+_DEFAULT_API = "https://api.github.com"
 
+# 同时支持 github.com 与 GitHub Enterprise（任意 host）的 PR 地址
 _PR_URL_RE = re.compile(
-    r"^https?://github\.com/(?P<owner>[\w.-]+)/(?P<repo>[\w.-]+)/pull/(?P<number>\d+)/?")
+    r"^https?://(?P<host>[\w.-]+)/(?P<owner>[\w.-]+)/(?P<repo>[\w.-]+)"
+    r"/pull/(?P<number>\d+)/?")
 
 
 class GithubError(Exception):
@@ -30,17 +32,37 @@ class GithubError(Exception):
 
 
 def parse_pr_url(url: str) -> tuple[str, str, int]:
-    """解析 PR 地址 -> (owner, repo, number)。"""
+    """解析 PR 地址 -> (owner, repo, number)。支持 github.com 与 GHE。"""
     m = _PR_URL_RE.match(url.strip())
     if not m:
         raise GithubError(f"无效的 PR 地址: {url}")
     return m.group("owner"), m.group("repo"), int(m.group("number"))
 
 
+def api_base_for_url(url: str) -> str:
+    """由 PR 地址推导对应的 API base。
+
+    github.com         -> https://api.github.com
+    GitHub Enterprise  -> https://<host>/api/v3
+    解析失败时回落到配置的默认 base。
+    """
+    m = _PR_URL_RE.match(url.strip())
+    if not m:
+        return CONFIG.get("github_api_base", _DEFAULT_API)
+    host = m.group("host")
+    if host == "github.com":
+        return _DEFAULT_API
+    return f"https://{host}/api/v3"
+
+
 class GithubClient:
 
-    def __init__(self, token: str | None = None, store=None):
+    def __init__(self, token: str | None = None, store=None,
+                 api_base: str | None = None):
         self.token_ = token if token is not None else CONFIG.github_token_
+        # API base 可配（支持 GitHub Enterprise）：构造参数 > 配置 > 默认
+        self.api_base_ = (api_base or CONFIG.get("github_api_base", _DEFAULT_API)
+                          ).rstrip("/")
         self.store_ = store
         self.session_ = requests.Session()
         headers = {
@@ -64,7 +86,7 @@ class GithubClient:
     def _request(self, method: str, path: str, operation: str = "fetch",
                  task_id: int | None = None, **kwargs):
         started = time.time()
-        url = path if path.startswith("http") else f"{_API}{path}"
+        url = path if path.startswith("http") else f"{self.api_base_}{path}"
         # GET 幂等，网络抖动（超时/断连）自动重试；写操作不重试避免重复提交
         attempts = 3 if method.upper() == "GET" else 1
         last_error: Exception | None = None

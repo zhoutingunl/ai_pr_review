@@ -8,9 +8,14 @@
     Style           命名规范 / 注释规范
 
 规则结果供 ReviewEngine 与 LLM 分析交叉验证（一致性检查），降低误报。
+
+架构：规则以**可插拔的 RuleProvider** 实现，由 RuleRegistry 编排。内置 4 类
+provider（正则行规则 / N+1 / 重复行 / 超大变更），第三方可实现 RuleProvider
+并 `RiskDetector(...).register(provider)` 接入新规则，无需改动核心。
 """
 from __future__ import annotations
 
+import abc
 import re
 
 # 每条规则: (rule_id, category, level, confidence, 正则, 提示)
@@ -127,33 +132,58 @@ def _indent(text: str) -> int:
     return len(text) - len(text.lstrip(" \t"))
 
 
-class RiskDetector:
+# ---------- 可插拔规则 provider ----------
 
-    def detect_file(self, filename: str, patch: str) -> list[dict]:
-        """扫描单个文件 patch 的新增行，返回候选风险列表。"""
-        findings: list[dict] = []
-        added = parse_patch_added_lines(patch)
+class RuleProvider(abc.ABC):
+    """规则 provider 抽象。第三方实现本接口即可接入自定义规则。
 
-        loop_indent: int | None = None  # 当前是否在新增的循环体内
-        seen_lines: dict[str, int] = {}
+    detect 接收某文件已解析的新增行 [(行号, 行内容), ...]，返回候选风险列表。
+    每条风险须含字段：rule/category/level/confidence/file/line/message/evidence。
+    """
 
+    id: str = ""
+
+    @abc.abstractmethod
+    def detect(self, filename: str,
+               added: list[tuple[int, str]]) -> list[dict]:
+        ...
+
+
+class RegexLineRuleProvider(RuleProvider):
+    """正则行级规则（安全/性能/稳定性/可维护性/风格五维），规则表可注入。"""
+
+    id = "regex-line"
+
+    def __init__(self, rules=_LINE_RULES):
+        self.rules_ = rules
+
+    def detect(self, filename, added):
+        findings = []
         for line_no, text in added:
             stripped = text.strip()
-
-            # 通用行级规则
-            for rule_id, category, level, conf, pattern, message in _LINE_RULES:
+            for rule_id, category, level, conf, pattern, message in self.rules_:
                 if pattern.search(text):
                     findings.append({
                         "rule": rule_id, "category": category, "level": level,
                         "confidence": conf, "file": filename, "line": line_no,
                         "message": message, "evidence": stripped[:200],
                     })
+        return findings
 
-            # N+1：新增循环体内出现查询/外部调用
+
+class NPlusOneRuleProvider(RuleProvider):
+    """新增循环体内出现查询/外部调用，疑似 N+1。"""
+
+    id = "n-plus-one"
+
+    def detect(self, filename, added):
+        findings = []
+        loop_indent: int | None = None
+        for line_no, text in added:
             if _LOOP_HEAD.match(text):
                 loop_indent = _indent(text)
             elif loop_indent is not None:
-                if stripped and _indent(text) <= loop_indent:
+                if text.strip() and _indent(text) <= loop_indent:
                     loop_indent = None
                 elif _QUERY_CALL.search(text):
                     findings.append({
@@ -162,34 +192,105 @@ class RiskDetector:
                         "file": filename, "line": line_no,
                         "message": "循环体内执行查询/外部调用，疑似 N+1，"
                                    "建议批量查询或移出循环",
-                        "evidence": stripped[:200],
+                        "evidence": text.strip()[:200],
                     })
                     loop_indent = None  # 同一循环只报一次
-
-            # 重复代码：同一 patch 内相同的非平凡新增行
-            if len(stripped) >= 30 and not stripped.startswith(("#", "//", "*")):
-                if stripped in seen_lines:
-                    findings.append({
-                        "rule": "MAINT_DUP_LINE", "category": "maintainability",
-                        "level": "P3", "confidence": 0.5,
-                        "file": filename, "line": line_no,
-                        "message": f"与第 {seen_lines[stripped]} 行新增内容重复，"
-                                   "建议提取公共逻辑",
-                        "evidence": stripped[:200],
-                    })
-                else:
-                    seen_lines[stripped] = line_no
-
-        # 高复杂度：单文件新增行数过大
-        if len(added) > 300:
-            findings.append({
-                "rule": "MAINT_HUGE_CHANGE", "category": "maintainability",
-                "level": "P2", "confidence": 0.6,
-                "file": filename, "line": added[0][0] if added else None,
-                "message": f"单文件新增 {len(added)} 行，变更过大，建议拆分 PR",
-                "evidence": "",
-            })
         return findings
+
+
+class DuplicateLineRuleProvider(RuleProvider):
+    """同一 patch 内重复的非平凡新增行。"""
+
+    id = "duplicate-line"
+    _MIN_LEN = 30
+
+    def detect(self, filename, added):
+        findings = []
+        seen_lines: dict[str, int] = {}
+        for line_no, text in added:
+            stripped = text.strip()
+            if len(stripped) < self._MIN_LEN or stripped.startswith(("#", "//", "*")):
+                continue
+            if stripped in seen_lines:
+                findings.append({
+                    "rule": "MAINT_DUP_LINE", "category": "maintainability",
+                    "level": "P3", "confidence": 0.5,
+                    "file": filename, "line": line_no,
+                    "message": f"与第 {seen_lines[stripped]} 行新增内容重复，"
+                               "建议提取公共逻辑",
+                    "evidence": stripped[:200],
+                })
+            else:
+                seen_lines[stripped] = line_no
+        return findings
+
+
+class HugeChangeRuleProvider(RuleProvider):
+    """单文件新增行数过大（高复杂度信号）。"""
+
+    id = "huge-change"
+
+    def __init__(self, max_added: int = 300):
+        self.max_added_ = max_added
+
+    def detect(self, filename, added):
+        if len(added) <= self.max_added_:
+            return []
+        return [{
+            "rule": "MAINT_HUGE_CHANGE", "category": "maintainability",
+            "level": "P2", "confidence": 0.6,
+            "file": filename, "line": added[0][0] if added else None,
+            "message": f"单文件新增 {len(added)} 行，变更过大，建议拆分 PR",
+            "evidence": "",
+        }]
+
+
+class RuleRegistry:
+    """规则 provider 注册表，按注册顺序编排执行。"""
+
+    def __init__(self, providers: list[RuleProvider] | None = None):
+        self.providers_: list[RuleProvider] = list(providers or [])
+
+    def register(self, provider: RuleProvider) -> RuleProvider:
+        """注册一个 provider（返回自身便于链式/装饰器用法）。"""
+        self.providers_.append(provider)
+        return provider
+
+    def detect_file(self, filename: str,
+                    added: list[tuple[int, str]]) -> list[dict]:
+        findings: list[dict] = []
+        for provider in self.providers_:
+            findings.extend(provider.detect(filename, added))
+        return findings
+
+
+def default_registry() -> RuleRegistry:
+    """内置规则注册表。"""
+    return RuleRegistry([
+        RegexLineRuleProvider(),
+        NPlusOneRuleProvider(),
+        DuplicateLineRuleProvider(),
+        HugeChangeRuleProvider(),
+    ])
+
+
+class RiskDetector:
+    """规则引擎：编排 RuleRegistry 中的 provider 扫描 PR 变更。
+
+    传入自定义 registry，或对默认实例 `register()` 追加 provider 以扩展规则。
+    """
+
+    def __init__(self, registry: RuleRegistry | None = None):
+        self.registry_ = registry or default_registry()
+
+    def register(self, provider: RuleProvider) -> RuleProvider:
+        """追加一个自定义规则 provider。"""
+        return self.registry_.register(provider)
+
+    def detect_file(self, filename: str, patch: str) -> list[dict]:
+        """扫描单个文件 patch 的新增行，返回候选风险列表。"""
+        added = parse_patch_added_lines(patch)
+        return self.registry_.detect_file(filename, added)
 
     def detect(self, files: list[dict]) -> list[dict]:
         """扫描 PR 全部变更文件。files 为 GitHub pulls/files 返回结构。"""

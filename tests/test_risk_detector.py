@@ -1,5 +1,7 @@
 """risk_detector.py 测试。"""
-from risk_detector import RiskDetector, parse_patch_added_lines
+from risk_detector import (RiskDetector, RuleProvider, RuleRegistry,
+                           RegexLineRuleProvider, default_registry,
+                           parse_patch_added_lines)
 
 
 def wrap_patch(*lines):
@@ -137,3 +139,52 @@ def test_finding_fields():
     f = fs[0]
     assert f["file"] == "a.py" and isinstance(f["line"], int)
     assert 0 < f["confidence"] <= 1 and f["level"].startswith("P")
+
+
+# ---------- 可插拔规则架构 ----------
+
+def test_default_registry_providers():
+    reg = default_registry()
+    ids = [p.id for p in reg.providers_]
+    assert ids == ["regex-line", "n-plus-one", "duplicate-line", "huge-change"]
+
+
+def test_register_custom_provider():
+    """第三方实现 RuleProvider 即可接入新规则，无需改核心。"""
+
+    class TodoChineseProvider(RuleProvider):
+        id = "todo-zh"
+
+        def detect(self, filename, added):
+            out = []
+            for line_no, text in added:
+                if "待办" in text:
+                    out.append({
+                        "rule": "CUSTOM_TODO_ZH", "category": "maintainability",
+                        "level": "P3", "confidence": 0.6, "file": filename,
+                        "line": line_no, "message": "发现中文待办标记",
+                        "evidence": text.strip()[:200]})
+            return out
+
+    d = RiskDetector()
+    d.register(TodoChineseProvider())
+    fs = d.detect_file("a.py", wrap_patch("x = 1  # 待办: 重构"))
+    assert "CUSTOM_TODO_ZH" in rules_of(fs)
+
+
+def test_custom_registry_isolated():
+    """传入自定义 registry 可完全替换内置规则集。"""
+    reg = RuleRegistry([RegexLineRuleProvider()])  # 只保留正则规则
+    d = RiskDetector(registry=reg)
+    fs = d.detect_file("a.py", wrap_patch(
+        "for u in users:", "    db.query(u)"))
+    # 只有正则 provider，N+1 不会被检出
+    assert "PERF_N_PLUS_1" not in rules_of(fs)
+
+
+def test_huge_change_provider_threshold_configurable():
+    from risk_detector import HugeChangeRuleProvider
+    reg = RuleRegistry([HugeChangeRuleProvider(max_added=2)])
+    d = RiskDetector(registry=reg)
+    fs = d.detect_file("a.py", wrap_patch("a=1", "b=2", "c=3"))
+    assert "MAINT_HUGE_CHANGE" in rules_of(fs)

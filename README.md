@@ -43,6 +43,10 @@ GitHub PR -> GithubClient -> ContextBuilder(四级上下文) -> ReviewEngine
 - **误报控制**：规则引擎 × LLM 一致性交叉验证，置信度 < 0.70 不展示。
 - **评分**：`security*0.4 + reliability*0.3 + performance*0.2 + style*0.1`，
   风险等级 P0（阻塞）~ P3（建议优化）。
+- **可插拔扩展**：AI 走配置驱动模型链（`config.json`）；规则引擎是
+  `RuleProvider` / `RuleRegistry` 架构，第三方实现 `RuleProvider` 即可
+  `RiskDetector().register(...)` 接入新规则；GitHub 端 API base 可配
+  （`github_api_base`），支持 GitHub Enterprise（`https://<host>/api/v3`）。
 
 > 模型选择、上下文获取方式与未来扩展方向的完整设计思路见
 > [design.md «设计思路说明»](design.md#设计思路说明)。

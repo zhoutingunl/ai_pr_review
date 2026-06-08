@@ -972,6 +972,17 @@ config.json
 
 本节按题目要求，说明系统在**模型选择**、**上下文获取方式**与**未来扩展方向**上的设计思路。所有要点均对应到已落地的实现（标注了关键文件/模块）。
 
+## 〇、抽象层与可插拔扩展
+
+系统在三处保留了可插拔的抽象层，扩展时无需改动核心：
+
+| 扩展点 | 抽象 | 怎么扩展 |
+|---|---|---|
+| **AI 模型** | `AIService` + `config.models` 角色→模型链 | 改 `config.json` 即可换模型/调 fallback，无需改代码 |
+| **规则引擎** | `RuleProvider`（抽象基类）+ `RuleRegistry`（编排） | 实现 `RuleProvider.detect()`，`RiskDetector().register(provider)` 接入；内置 4 类 provider（正则行规则 / N+1 / 重复行 / 超大变更）均按此实现 |
+| **GitHub 端** | `GithubClient(api_base=...)` + `github_api_base` 配置 + `api_base_for_url()` | 设置 `github_api_base` 适配 GitHub Enterprise（`https://<host>/api/v3`）；`parse_pr_url` 支持任意 host |
+
+
 ## 一、模型选择
 
 ### AI 统一入口，业务不直连模型

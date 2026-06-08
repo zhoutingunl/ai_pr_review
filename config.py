@@ -26,6 +26,9 @@ _DEFAULTS = {
     # Hermes AI 统一入口
     "hermes_base": "http://10.210.32.30:8787",
 
+    # GitHub API base（支持 GitHub Enterprise，例: https://ghe.corp/api/v3）
+    "github_api_base": "https://api.github.com",
+
     # 多模型架构：角色 -> 模型；fallback 为 429 限流时的跨 plan 故障转移链
     # 注：MiniMax-M3 属 minimax-cn plan，glm-5.1 / kimi-k2.5 属 ark plan
     "models": {
