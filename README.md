@@ -6,6 +6,9 @@
 
 完整设计见 [design.md](design.md)。
 
+DEMO视频链接 https://www.bilibili.com/video/BV1cVVE6WEac/?spm_id_from=333.1387.homepage.video_card.click&vd_source=27dd0ecc5860cffe2555156e912ee83e
+
+
 ## 快速开始
 
 ```bash
