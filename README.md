@@ -9,6 +9,11 @@
 DEMO视频链接 https://www.bilibili.com/video/BV1cVVE6WEac/?spm_id_from=333.1387.homepage.video_card.click&vd_source=27dd0ecc5860cffe2555156e912ee83e
 
 
+## 环境要求
+
+**Python 3.11+**（开发与测试均基于 Python 3.11；下方命令使用 `python3.11`）。
+其余依赖见 `requirements.txt`。
+
 ## 快速开始
 
 ```bash
