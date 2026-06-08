@@ -44,6 +44,9 @@ GitHub PR -> GithubClient -> ContextBuilder(四级上下文) -> ReviewEngine
 - **评分**：`security*0.4 + reliability*0.3 + performance*0.2 + style*0.1`，
   风险等级 P0（阻塞）~ P3（建议优化）。
 
+> 模型选择、上下文获取方式与未来扩展方向的完整设计思路见
+> [design.md «设计思路说明»](design.md#设计思路说明)。
+
 ## Webhook 自动触发
 
 GitHub 仓库 Webhook 指向 `POST /webhook`（事件选 `pull_request`，
