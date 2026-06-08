@@ -87,9 +87,8 @@ _LINE_RULES: list[tuple[str, str, str, float, re.Pattern, str]] = [
     ("MAINT_TODO", "maintainability", "P3", 0.6,
      re.compile(r"#\s*(TODO|FIXME|XXX)|//\s*(TODO|FIXME|XXX)", re.I),
      "遗留 TODO/FIXME，建议补充完成计划或关联 issue"),
-    ("MAINT_DEEP_NESTING", "maintainability", "P3", 0.5,
-     re.compile(r"^(\s{20,}|\t{5,})\S"),
-     "嵌套层级过深，建议提前返回或拆分函数"),
+    # 深层嵌套改由 DeepNestingRuleProvider 精确判定（仅控制流语句），
+    # 不再用纯缩进正则——后者会误报多行 import/调用的续行。
 
     # ---------- Style ----------
     ("STYLE_LONG_LINE", "style", "P3", 0.5,
@@ -105,6 +104,18 @@ _LOOP_HEAD = re.compile(r"^\s*(for|while)\b.*[:{)]\s*$")
 _QUERY_CALL = re.compile(
     r"\.(execute|query|filter|find|get|fetch|save|insert|update|delete)\s*\(|"
     r"(requests|httpx|axios|fetch)[\w.]*\s*[.(]", re.I)
+
+# 深层嵌套只认「控制流语句」开头，避免把续行/深缩进数据行误判为嵌套
+_CTRL_FLOW = re.compile(
+    r"^(if|elif|else|for|while|with|try|except|finally|switch|case|do|"
+    r"}\s*else|}\s*catch)\b")
+
+# 重复行：跳过结构性样板（return X / 空容器赋值 / 纯括号收尾 / 纯字典键值）
+_BOILERPLATE_LINE = re.compile(
+    r"^(return\s+[\w.]+|[\w.]+\s*=\s*(\[\]|\{\}|\(\)|0|None|True|False|\"\"|'')|"
+    r"[)\]}]+,?|(['\"]).*?\3\s*:\s*.+,?|break|continue|pass)$")
+# 逻辑行信号：含函数调用或运算/比较/逻辑运算符（纯声明/数据行不算"可去重逻辑"）
+_LOGIC_SIGNAL = re.compile(r"\(|[+\-*/%]|[<>=!]=|\b(and|or|not|in)\b")
 
 _HUNK_HEADER = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@")
 
@@ -199,7 +210,11 @@ class NPlusOneRuleProvider(RuleProvider):
 
 
 class DuplicateLineRuleProvider(RuleProvider):
-    """同一 patch 内重复的非平凡新增行。"""
+    """同一 patch 内重复的**逻辑行**。
+
+    仅统计「含函数调用或运算符」的实质逻辑行；跳过结构性样板（return x /
+    空容器赋值 / 纯字典键值 / 括号收尾等），避免把相邻函数的样板行误判为重复。
+    """
 
     id = "duplicate-line"
     _MIN_LEN = 30
@@ -211,6 +226,15 @@ class DuplicateLineRuleProvider(RuleProvider):
             stripped = text.strip()
             if len(stripped) < self._MIN_LEN or stripped.startswith(("#", "//", "*")):
                 continue
+            # 声明行 / 块头 / 签名续行：跨函数重复是接口契约，非可提取的重复
+            if (stripped.endswith(":")
+                    or stripped.startswith(("def ", "class ", "async ",
+                                            "@", "import ", "from "))):
+                continue
+            if _BOILERPLATE_LINE.match(stripped):
+                continue  # 结构性样板行，不算重复
+            if not _LOGIC_SIGNAL.search(stripped):
+                continue  # 无调用/运算的纯声明/数据行，不算可去重逻辑
             if stripped in seen_lines:
                 findings.append({
                     "rule": "MAINT_DUP_LINE", "category": "maintainability",
@@ -222,6 +246,34 @@ class DuplicateLineRuleProvider(RuleProvider):
                 })
             else:
                 seen_lines[stripped] = line_no
+        return findings
+
+
+class DeepNestingRuleProvider(RuleProvider):
+    """深层嵌套：仅当**控制流语句**出现在深缩进处才报。
+
+    相比纯缩进正则，跳过了多行 import/调用的续行、深缩进的数据/赋值行，
+    只保留真正的「控制流套控制流」信号。
+    """
+
+    id = "deep-nesting"
+
+    def __init__(self, min_indent: int = 20):
+        self.min_indent_ = min_indent
+
+    def detect(self, filename, added):
+        findings = []
+        for line_no, text in added:
+            if _indent(text) < self.min_indent_:
+                continue
+            if _CTRL_FLOW.match(text.strip()):
+                findings.append({
+                    "rule": "MAINT_DEEP_NESTING", "category": "maintainability",
+                    "level": "P3", "confidence": 0.5,
+                    "file": filename, "line": line_no,
+                    "message": "控制流嵌套层级过深，建议提前返回或拆分函数",
+                    "evidence": text.strip()[:200],
+                })
         return findings
 
 
@@ -270,6 +322,7 @@ def default_registry() -> RuleRegistry:
         RegexLineRuleProvider(),
         NPlusOneRuleProvider(),
         DuplicateLineRuleProvider(),
+        DeepNestingRuleProvider(),
         HugeChangeRuleProvider(),
     ])
 

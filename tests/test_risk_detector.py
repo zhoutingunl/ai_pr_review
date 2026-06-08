@@ -100,9 +100,24 @@ def test_style_and_maintainability():
         "# TODO: 以后再说",
         long_line,
         "print('debug')",
-        " " * 24 + "deep_nested_call()"))
+        " " * 24 + "if cond:"))   # 深缩进的控制流语句 -> 深层嵌套
     assert {"MAINT_TODO", "STYLE_LONG_LINE", "STYLE_PRINT_DEBUG",
             "MAINT_DEEP_NESTING"} <= rules_of(fs)
+
+
+def test_deep_nesting_only_control_flow():
+    """深层嵌套只报控制流语句，续行/深缩进数据行不误报。"""
+    d = RiskDetector()
+    # 深缩进的续行（多行 import/调用参数）与普通调用 -> 不应触发
+    fs = d.detect_file("a.py", wrap_patch(
+        " " * 24 + "some_continuation_arg,",
+        " " * 24 + "deep_nested_call()"))
+    assert "MAINT_DEEP_NESTING" not in rules_of(fs)
+    # 深缩进的 for/while/except -> 应触发
+    fs = d.detect_file("a.py", wrap_patch(
+        " " * 20 + "for x in items:",
+        " " * 20 + "except ValueError:"))
+    assert "MAINT_DEEP_NESTING" in rules_of(fs)
 
 
 def test_duplicate_lines():
@@ -111,6 +126,27 @@ def test_duplicate_lines():
     fs = d.detect_file("a.py", wrap_patch(dup, "y = 2", dup))
     dups = [f for f in fs if f["rule"] == "MAINT_DUP_LINE"]
     assert len(dups) == 1 and "重复" in dups[0]["message"]
+
+
+def test_duplicate_skips_boilerplate():
+    """结构性样板行（return x / 空容器赋值 / 字典键值）重复出现不算重复。"""
+    d = RiskDetector()
+    fs = d.detect_file("a.py", wrap_patch(
+        "        findings = []                          ",  # 凑够长度的空容器赋值
+        "        return findings_value_that_is_long_enough",
+        "        findings = []                          ",
+        "        return findings_value_that_is_long_enough",
+        '        "rule": rule_identifier, "category": cat_value,',
+        '        "rule": rule_identifier, "category": cat_value,'))
+    assert "MAINT_DUP_LINE" not in rules_of(fs)
+
+
+def test_duplicate_skips_signatures():
+    """相同方法签名/块头（接口契约）跨函数重复不算重复。"""
+    d = RiskDetector()
+    sig = "    def detect(self, filename, added_lines_param):"
+    fs = d.detect_file("a.py", wrap_patch(sig, "    x = compute(a)", sig))
+    assert "MAINT_DUP_LINE" not in rules_of(fs)
 
 
 def test_huge_change():
@@ -146,7 +182,8 @@ def test_finding_fields():
 def test_default_registry_providers():
     reg = default_registry()
     ids = [p.id for p in reg.providers_]
-    assert ids == ["regex-line", "n-plus-one", "duplicate-line", "huge-change"]
+    assert ids == ["regex-line", "n-plus-one", "duplicate-line",
+                   "deep-nesting", "huge-change"]
 
 
 def test_register_custom_provider():
