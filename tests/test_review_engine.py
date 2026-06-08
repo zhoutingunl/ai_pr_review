@@ -70,6 +70,57 @@ def test_run_success_with_writeback(store):
         assert store.count_events(event) == 1, event
 
 
+def test_run_tiers_review_context_for_large_pr(store):
+    """大 PR：review 上下文降级、记录 trim 事件、报告标注省略。"""
+    engine, gh, cb, ai = make_engine(store)
+    ctx = make_ctx()
+    # 撑大 diff 超过 medium 阈值，并带上二/三/四级上下文
+    ctx["files"][0]["patch"] = "@@ -1 +1 @@\n+" + "x = 1\n" * 9000
+    ctx["related_files"] = {"dep.py": "def q(): pass"}
+    ctx["call_chains"] = ["a.py -> dep.py"]
+    ctx["history_comments"] = [{"scope": "repo_recent", "path": "a.py",
+                                "body": "历史评论"}]
+    cb.build.return_value = ctx
+
+    captured = {}
+
+    def spy_review(prompt, task_id=None, on_token=None):
+        captured["prompt"] = prompt
+        import json as _json
+        return _json.dumps({"issues": [], "rejected": [], "conclusion": "c"})
+
+    ai.review.side_effect = spy_review
+    result = engine.run("https://github.com/o/r/pull/30")
+    # 大 PR：关联文件与调用链被省略，历史保留
+    assert "二级上下文" not in captured["prompt"]
+    assert "三级上下文" not in captured["prompt"]
+    assert "四级上下文" in captured["prompt"]
+    # 记录了降级事件
+    assert store.count_events("review_context_trimmed") == 1
+    # 报告标注了省略
+    assert "因 PR 体量较大" in result["report"]
+
+
+def test_run_small_pr_keeps_full_review_context(store):
+    engine, gh, cb, ai = make_engine(store)
+    ctx = make_ctx()  # 小 diff
+    ctx["related_files"] = {"dep.py": "def q(): pass"}
+    ctx["call_chains"] = ["a.py -> dep.py"]
+    cb.build.return_value = ctx
+    captured = {}
+
+    def spy_review(prompt, task_id=None, on_token=None):
+        captured["prompt"] = prompt
+        import json as _json
+        return _json.dumps({"issues": [], "rejected": [], "conclusion": "c"})
+
+    ai.review.side_effect = spy_review
+    result = engine.run("https://github.com/o/r/pull/31")
+    assert "二级上下文" in captured["prompt"]  # 小 PR 喂全量
+    assert store.count_events("review_context_trimmed") == 0
+    assert "因 PR 体量较大" not in result["report"]
+
+
 def test_run_streams_progress_and_clears(store):
     """运行中把模型增量输出写入进度；结束后清理进度。"""
     engine, gh, _, ai = make_engine(store)

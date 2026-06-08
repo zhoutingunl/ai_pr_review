@@ -1,8 +1,9 @@
 """context_builder.py 测试。"""
 from unittest.mock import MagicMock
 
-from context_builder import (ContextBuilder, context_to_prompt,
-                             extract_imports, resolve_import)
+from context_builder import (ContextBuilder, context_to_prompt, diff_chars,
+                             extract_imports, resolve_import,
+                             review_context_to_prompt)
 
 
 # ---------- import 提取 ----------
@@ -164,6 +165,46 @@ def test_context_to_prompt_lean():
     assert "四级上下文" not in lean
     # 精简后应短于全量
     assert len(lean) < len(context_to_prompt(ctx))
+
+
+def test_context_to_prompt_granular_flags():
+    ctx = ContextBuilder(make_github()).build("o", "r", 1)
+    # 只省略二级关联文件，保留三/四级
+    p = context_to_prompt(ctx, include_related=False)
+    assert "二级上下文" not in p
+    assert "三级上下文" in p and "四级上下文" in p
+
+
+def test_diff_chars():
+    ctx = {"files": [{"patch": "abc"}, {"patch": "de"}, {"patch": None}]}
+    assert diff_chars(ctx) == 5
+
+
+def test_review_context_tiers():
+    ctx = ContextBuilder(make_github()).build("o", "r", 1)
+    size = diff_chars(ctx)
+
+    # 小 PR：阈值放大 -> 全量 4 级，无省略
+    p, tier, omitted = review_context_to_prompt(
+        ctx, small_max=size + 1000, medium_max=size + 2000)
+    assert tier == "small" and omitted == []
+    assert "二级上下文" in p and "三级上下文" in p and "四级上下文" in p
+
+    # 中 PR：省略关联文件，保留调用链 + 历史
+    p, tier, omitted = review_context_to_prompt(
+        ctx, small_max=0, medium_max=size + 1000)
+    assert tier == "medium"
+    assert "二级 关联文件" in omitted
+    assert "二级上下文" not in p
+    assert "三级上下文" in p and "四级上下文" in p
+
+    # 大 PR：仅留历史，省略关联文件 + 调用链
+    p, tier, omitted = review_context_to_prompt(
+        ctx, small_max=0, medium_max=0)
+    assert tier == "large"
+    assert "二级 关联文件" in omitted and "三级 调用链" in omitted
+    assert "二级上下文" not in p and "三级上下文" not in p
+    assert "四级上下文" in p   # 历史评论始终保留（降误报价值最高）
 
 
 def test_context_to_prompt_truncation():

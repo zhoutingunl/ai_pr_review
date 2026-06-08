@@ -29,6 +29,23 @@ def test_full_report():
     assert "维度得分" in report
 
 
+def test_report_omitted_context_note():
+    report = ReportGenerator().generate(
+        CTX, {"overview": "o"}, [], [], 90.0, "P3",
+        {c: 100.0 for c in CATS},
+        omitted_context=["二级 关联文件", "三级 调用链"])
+    assert "因 PR 体量较大" in report
+    assert "二级 关联文件、三级 调用链" in report
+    assert "规则引擎仍全量扫描 Diff" in report
+
+
+def test_report_no_omitted_note_when_none():
+    report = ReportGenerator().generate(
+        CTX, {"overview": "o"}, [], [], 90.0, "P3",
+        {c: 100.0 for c in CATS})
+    assert "因 PR 体量较大" not in report
+
+
 def test_report_no_issues():
     report = ReportGenerator().generate(
         CTX, {"overview": ""}, [], [], 100.0, "P3",

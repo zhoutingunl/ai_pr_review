@@ -273,15 +273,30 @@ class ContextBuilder:
         return history[: self.history_limit_ * 2]
 
 
+def diff_chars(ctx: dict) -> int:
+    """PR 变更 Diff 的总字符数（分级阈值的依据）。"""
+    return sum(len(f.get("patch") or "") for f in ctx["files"])
+
+
 def context_to_prompt(ctx: dict, max_chars: int = 60000,
-                      lean: bool = False) -> str:
+                      lean: bool = False,
+                      include_related: bool = True,
+                      include_chains: bool = True,
+                      include_history: bool = True) -> str:
     """把上下文 bundle 压平成 LLM prompt 文本（带预算截断）。
 
-    lean=True 时只保留 PR 信息 + Commit + 一级 Diff，丢弃二/三/四级上下文。
-    用于 review 调用：实测大 PR 全量上下文（含关联文件/调用链/历史）会让推理
-    模型陷入长时间空转、迟迟不吐首 token；精简后显著降低推理负担。summary
-    调用仍用全量上下文以保证总结质量。
+    可分别控制是否纳入二/三/四级上下文：
+      include_related  二级 关联文件（全文，最占字数）
+      include_chains   三级 调用链（字数小）
+      include_history  四级 历史 Review 评论（字数小，降误报价值高）
+    lean=True 为快捷写法：等价于三者全 False（只留 PR 信息 + Commit + 一级 Diff）。
+
+    summary 用全量；review 由 review_context_to_prompt 按 PR 体量分级取舍
+    （见其文档与 hermes 延迟踩坑：大 PR 全量上下文会让推理模型长时间空转）。
     """
+    if lean:
+        include_related = include_chains = include_history = False
+
     parts: list[str] = []
     pr = ctx["pr"]
     parts.append(
@@ -301,22 +316,60 @@ def context_to_prompt(ctx: dict, max_chars: int = 60000,
                           f"```diff\n{patch}\n```")
     parts.append("## 一级上下文: 变更 Diff\n" + "\n".join(diff_parts))
 
-    if not lean:
-        if ctx["related_files"]:
-            rel_parts = [f"### {p}\n```\n{t[:4000]}\n```"
-                         for p, t in ctx["related_files"].items()]
-            parts.append("## 二级上下文: 关联文件\n" + "\n".join(rel_parts))
+    if include_related and ctx["related_files"]:
+        rel_parts = [f"### {p}\n```\n{t[:4000]}\n```"
+                     for p, t in ctx["related_files"].items()]
+        parts.append("## 二级上下文: 关联文件\n" + "\n".join(rel_parts))
 
-        if ctx["call_chains"]:
-            parts.append("## 三级上下文: 调用链\n" + "\n".join(
-                f"- {c}" for c in ctx["call_chains"]))
+    if include_chains and ctx["call_chains"]:
+        parts.append("## 三级上下文: 调用链\n" + "\n".join(
+            f"- {c}" for c in ctx["call_chains"]))
 
-        if ctx["history_comments"]:
-            parts.append("## 四级上下文: 历史 Review 评论\n" + "\n".join(
-                f"- [{h['scope']}] {h['path']}: {h['body'][:200]}"
-                for h in ctx["history_comments"]))
+    if include_history and ctx["history_comments"]:
+        parts.append("## 四级上下文: 历史 Review 评论\n" + "\n".join(
+            f"- [{h['scope']}] {h['path']}: {h['body'][:200]}"
+            for h in ctx["history_comments"]))
 
     text = "\n\n".join(parts)
     if len(text) > max_chars:
         text = text[:max_chars] + "\n\n(上下文超长已截断)"
     return text
+
+
+def review_context_to_prompt(ctx: dict, small_max: int = 15000,
+                             medium_max: int = 40000) -> tuple[str, str, list[str]]:
+    """按 PR 体量为 review 阶段分级取舍上下文。
+
+    依据变更 Diff 字符数分三档（恢复 design.md「4 级上下文喂评审」的本意，
+    同时把大 PR 撑爆推理模型的风险控制住）：
+      小 PR (< small_max)            全量：关联文件 + 调用链 + 历史
+      中 PR (small_max~medium_max)   保留调用链 + 历史，省略关联文件（最占字数）
+      大 PR (>= medium_max)          仅保留历史（字数小、降误报价值最高），
+                                     省略关联文件与调用链
+
+    返回 (prompt, tier, omitted)。omitted 为被省略的上下文级别名，
+    供报告标注「因体量已省略 X」，避免静默阉割。
+    """
+    size = diff_chars(ctx)
+    if size < small_max:
+        tier = "small"
+        include_related, include_chains, include_history = True, True, True
+    elif size < medium_max:
+        tier = "medium"
+        include_related, include_chains, include_history = False, True, True
+    else:
+        tier = "large"
+        include_related, include_chains, include_history = False, False, True
+
+    omitted: list[str] = []
+    if not include_related and ctx["related_files"]:
+        omitted.append("二级 关联文件")
+    if not include_chains and ctx["call_chains"]:
+        omitted.append("三级 调用链")
+    if not include_history and ctx["history_comments"]:
+        omitted.append("四级 历史评论")
+
+    prompt = context_to_prompt(ctx, include_related=include_related,
+                               include_chains=include_chains,
+                               include_history=include_history)
+    return prompt, tier, omitted

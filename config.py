@@ -55,6 +55,11 @@ _DEFAULTS = {
     "context_max_related_files": 8,    # 二级上下文最多拉取的关联文件数
     "context_max_file_bytes": 60000,   # 单文件最大读取字节数
     "context_history_reviews": 20,     # 四级上下文最多拉取的历史评论数
+
+    # review 阶段上下文分级阈值（变更 Diff 字符数）：
+    # 小 PR 喂全量 4 级；中 PR 省略关联文件；大 PR 仅留历史评论
+    "review_context_small_max": 15000,
+    "review_context_medium_max": 40000,
 }
 
 

@@ -17,7 +17,7 @@ import json
 
 from ai_service import AIError, extract_json
 from config import CONFIG
-from context_builder import context_to_prompt
+from context_builder import context_to_prompt, review_context_to_prompt
 from github_client import parse_pr_url
 from report_generator import ReportGenerator
 from risk_detector import RiskDetector
@@ -99,6 +99,9 @@ class ReviewEngine:
         self.reporter_ = ReportGenerator()
         self.threshold_ = CONFIG.confidence_threshold
         self.weights_ = CONFIG.score_weights
+        # review 上下文分级阈值（变更 Diff 字符数）
+        self.review_small_max_ = int(CONFIG.get("review_context_small_max", 15000))
+        self.review_medium_max_ = int(CONFIG.get("review_context_medium_max", 40000))
 
     # ---------- 对外入口 ----------
 
@@ -134,10 +137,16 @@ class ReviewEngine:
                                  stream="")
         self.store_.record_event("github_fetch", {"task_id": task_id})
         ctx = self.context_.build(owner, repo, number, task_id=task_id)
-        # summary 用全量上下文（含二/三/四级）；review 用精简上下文，
-        # 避免大 PR 全量上下文让推理模型长时间空转（见 context_to_prompt 注释）
+        # summary 用全量上下文（含二/三/四级）；review 按 PR 体量分级取舍上下文，
+        # 既恢复「4 级上下文喂评审」的设计本意，又控制大 PR 撑爆推理模型的风险
         prompt_ctx = context_to_prompt(ctx)
-        review_ctx = context_to_prompt(ctx, lean=True)
+        review_ctx, review_tier, omitted_ctx = review_context_to_prompt(
+            ctx, small_max=self.review_small_max_,
+            medium_max=self.review_medium_max_)
+        if omitted_ctx:
+            self.store_.record_event("review_context_trimmed",
+                                     {"task_id": task_id, "tier": review_tier,
+                                      "omitted": omitted_ctx})
 
         # 规则引擎
         rule_findings = self.detector_.detect(ctx["files"])
@@ -180,7 +189,8 @@ class ReviewEngine:
         # 报告
         self.store_.set_progress(task_id, stage="生成评审报告…", stream="")
         report = self.reporter_.generate(ctx, summary, issues, fixes, score,
-                                         risk_level, category_scores)
+                                         risk_level, category_scores,
+                                         omitted_context=omitted_ctx)
         self.store_.add_comment(task_id, report)
         self.store_.finish_task(task_id, "success", score=score,
                                 risk_level=risk_level,

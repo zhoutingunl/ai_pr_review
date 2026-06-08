@@ -18,7 +18,8 @@ class ReportGenerator:
 
     def generate(self, ctx: dict, summary: dict, issues: list[dict],
                  fixes: list[dict], score: float, risk_level: str,
-                 category_scores: dict) -> str:
+                 category_scores: dict,
+                 omitted_context: list[str] | None = None) -> str:
         pr = ctx["pr"]
         lines: list[str] = []
         lines.append("# AI PR Review 评审报告")
@@ -28,6 +29,9 @@ class ReportGenerator:
                      f"+{pr['additions']} / -{pr['deletions']}")
         lines.append(f"**综合评分**: {score} / 100　**风险等级**: "
                      f"{_LEVEL_BADGE.get(risk_level, risk_level)}")
+        if omitted_context:
+            lines.append(f"> ⚠️ 因 PR 体量较大，本次评审已省略上下文："
+                         f"{'、'.join(omitted_context)}（规则引擎仍全量扫描 Diff）")
         lines.append("")
 
         # 变更总结
