@@ -1,0 +1,16 @@
+# 公网化部署模板：仅本应用；Hermes 网关是外部依赖，通过 HERMES_BASE 指向。
+# 用法见 docs/public.md。
+services:
+  ai-pr-review:
+    build: .
+    ports:
+      - "38001:38001"
+    environment:
+      # 从 .env 注入（也可在此直接写死）。HERMES_BASE 必须指向你自己的 Hermes。
+      - HERMES_BASE=${HERMES_BASE:-}
+      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
+      - WEBHOOK_SECRET=${WEBHOOK_SECRET:-}
+    volumes:
+      # 持久化 SQLite。config.json（如有）由构建时一并打包；改配置后 rebuild 即可。
+      - ./data:/app/data
+    restart: unless-stopped
