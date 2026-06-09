@@ -39,6 +39,10 @@ _LINE_RULES: list[tuple[str, str, str, float, re.Pattern, str]] = [
     ("SEC_HARDCODED_SECRET", "security", "P0", 0.85,
      re.compile(r"""(password|passwd|secret|api_key|apikey|access_key|token)\s*[:=]\s*["'][^"'\s]{6,}["']""", re.I),
      "疑似硬编码密码/密钥，应移入环境变量或配置中心"),
+    # Go 短变量声明 := 与反引号字符串不被上面的 [:=]+["'] 覆盖，单列一条
+    ("SEC_GO_SHORT_VAR", "security", "P0", 0.85,
+     re.compile(r"""(password|passwd|secret|api_key|apikey|access_key|token)\s*:=\s*["'`][^"'`\s]{6,}["'`]""", re.I),
+     "疑似硬编码密码/密钥（Go := 短变量声明），应移入环境变量或配置中心"),
     ("SEC_TOKEN_LEAK", "security", "P0", 0.95,
      re.compile(r"(gh[pousr]_[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|xox[baprs]-[\w-]{10,}|-----BEGIN (RSA |EC )?PRIVATE KEY-----|sk-[A-Za-z0-9]{20,})"),
      "检测到疑似真实凭证（Token/私钥），必须立即移除并轮换"),
