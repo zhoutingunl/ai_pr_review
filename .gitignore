@@ -27,3 +27,5 @@ venv/
 
 # 录制原始视频(大文件，不入库)
 screenshots/video/
+screenshots/demo.mp4
+screenshots/_chk_*.png
