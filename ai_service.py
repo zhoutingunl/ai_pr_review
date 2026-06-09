@@ -17,12 +17,15 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import time
 
 import requests
 
 from config import CONFIG
+
+_log = logging.getLogger(__name__)
 
 
 class AIError(Exception):
@@ -113,6 +116,8 @@ class AIService:
                 self._record(role, model, True, started, usage, task_id)
                 return text
             except Exception as e:  # noqa: BLE001 - 任一失败都尝试下一模型
+                _log.warning("AI[%s] 模型 %s 调用失败，尝试下一个: %s",
+                             role, model, e)
                 self._record(role, model, False, started, None, task_id, str(e))
                 last_error = e
         raise AIError(f"角色 {role} 所有模型均失败: {last_error}") from last_error
@@ -142,8 +147,8 @@ class AIService:
         try:
             requests.post(f"{self.base_}/api/chat/cancel",
                           json={"session_id": session_id}, timeout=5)
-        except requests.RequestException:
-            pass
+        except requests.RequestException as e:
+            _log.debug("作废会话 %s 失败（可忽略）: %s", session_id, e)
 
     def _ask_once(self, prompt: str, model: str,
                   on_token=None) -> tuple[str, dict]:
@@ -158,8 +163,8 @@ class AIService:
             # 通知上层：新模型开始（用于重置界面上的流式片段）
             try:
                 on_token(None, model)
-            except Exception:  # noqa: BLE001 - 回调异常不影响主流程
-                pass
+            except Exception as e:  # noqa: BLE001 - 回调异常不影响主流程
+                _log.warning("on_token(模型开始) 回调异常: %s", e)
         try:
             stream_id = self._post(
                 "/api/chat/start",
@@ -226,8 +231,8 @@ class AIService:
                     if on_token and text:
                         try:
                             on_token(text, model)
-                        except Exception:  # noqa: BLE001 - 回调异常不影响主流程
-                            pass
+                        except Exception as e:  # noqa: BLE001 - 回调异常不影响主流程
+                            _log.warning("on_token(token) 回调异常: %s", e)
                 elif event == "tool":
                     got_token = True
                     last_progress = now
@@ -237,8 +242,8 @@ class AIService:
                         requests.post(f"{self.base_}/api/approval/respond",
                                       json={"session_id": session_id,
                                             "choice": "always"}, timeout=5)
-                    except requests.RequestException:
-                        pass
+                    except requests.RequestException as e:
+                        _log.warning("自动批准工具失败: %s", e)
                 elif event == "done":
                     s = data.get("session") or {}
                     usage = {"input_tokens": s.get("input_tokens", 0),

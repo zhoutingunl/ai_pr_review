@@ -1,9 +1,23 @@
 {
+  "host": "0.0.0.0",
   "port": 38001,
+  "db_path": "data/review.db",
+  "hermes_base": "http://10.210.32.30:8787",
+  "github_api_base": "https://api.github.com",
   "models": {
-    "review": {"primary": "glm-5.1", "fallback": ["kimi-k2.5", "MiniMax-M3"]},
-    "summary": {"primary": "kimi-k2.5", "fallback": ["glm-5.1", "MiniMax-M3"]},
-    "fix": {"primary": "kimi-k2.5", "fallback": ["glm-5.1", "MiniMax-M3"]}
+    "review":  {"primary": "glm-5.1",   "fallback": ["kimi-k2.5", "MiniMax-M3"]},
+    "summary": {"primary": "kimi-k2.5",  "fallback": ["glm-5.1", "MiniMax-M3"]},
+    "fix":     {"primary": "kimi-k2.5",  "fallback": ["glm-5.1", "MiniMax-M3"]}
   },
-  "confidence_threshold": 0.70
+  "ai_no_progress_timeout": 420,
+  "ai_stall_timeout": 90,
+  "ai_timeout": 3600,
+  "confidence_threshold": 0.7,
+  "score_weights": {"security": 0.4, "reliability": 0.3, "performance": 0.2, "style": 0.1},
+  "scheduler_max_concurrent": 2,
+  "context_max_related_files": 8,
+  "context_max_file_bytes": 60000,
+  "context_history_reviews": 20,
+  "review_context_small_max": 15000,
+  "review_context_medium_max": 40000
 }

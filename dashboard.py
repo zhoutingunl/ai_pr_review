@@ -17,13 +17,17 @@ _TRACKED_EVENTS = [
 
 class Dashboard:
 
-    def __init__(self, store):
+    def __init__(self, store, scheduler=None):
         self.store_ = store
+        self.scheduler_ = scheduler
         self.metrics_ = Metrics(store)
 
     def snapshot(self) -> dict:
-        """完整 Dashboard 数据：四组 QoS 指标 + 埋点计数 + 近期任务。"""
+        """完整 Dashboard 数据：四组 QoS 指标 + 调度并发 + 埋点计数 + 近期任务。"""
         data = self.metrics_.all()
+        data["scheduler"] = (self.scheduler_.stats() if self.scheduler_
+                             else {"in_flight": 0, "queued": 0,
+                                   "max_concurrent": 0, "active": []})
         data["events"] = {e: self.store_.count_events(e)
                           for e in _TRACKED_EVENTS}
         data["recent_tasks"] = [
