@@ -37,6 +37,29 @@ python3.11 app.py             # 默认 http://0.0.0.0:38001
 打开首页，粘贴 PR 地址（如 `https://github.com/owner/repo/pull/123`）即可发起评审；
 `/metrics` 为 QoS Dashboard。
 
+## 界面预览
+
+> 以下为真实数据截图（testbed PR 的真实缺陷、各模型成功率 / token 消耗等，非 mock）。
+
+**首页 · 评审任务列表**
+
+![首页](screenshots/01_index.png)
+
+**任务详情 · 行级问题 + AI 修复 Patch + 置信度 + 采纳标注**
+
+![任务详情](screenshots/04_task_issues_top.png)
+
+**QoS Dashboard · 四组指标 + 后台并发（在跑/排队）+ 埋点事件**
+
+![Dashboard](screenshots/03_metrics.png)
+
+**运行中 · 模型逐字流式输出（实时录制，2× 加速）**
+
+![流式评审](screenshots/demo.gif)
+
+> 运行中任务页**实时流式展示**模型思考与逐字输出过程（上图为真实评审录制），
+> 完成后替换为最终报告。
+
 ## 架构
 
 ```text
