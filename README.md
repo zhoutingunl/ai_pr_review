@@ -51,6 +51,36 @@ GitHub PR -> GithubClient -> ContextBuilder(四级上下文) -> ReviewEngine
 > 模型选择、上下文获取方式与未来扩展方向的完整设计思路见
 > [design.md «设计思路说明»](design.md#设计思路说明)。
 
+## 异步与并发
+
+提交评审（`POST /api/review` 或 Webhook）后**立即返回**，评审流水线在后台异步执行，
+前端轮询 `/api/task/<id>/progress` 看实时进度。后台并发受
+`scheduler_max_concurrent`（默认 2）限制，超额的提交排队等待，避免 Webhook 涌入时
+无上限并发拖垮 Hermes / GitHub。当前「在跑 / 排队」数在 `/metrics` 顶部可见。
+
+## 配置项
+
+复制 `config.example.json` 为 `config.json` 覆盖默认值（JSON 无注释，含义见下表）。
+加载优先级：内置默认 < `config.json` < 环境变量（`.env`）。
+
+| 字段 | 默认 | 含义 |
+|---|---|---|
+| `host` / `port` | `0.0.0.0` / `38001` | Web 监听地址与端口 |
+| `db_path` | `data/review.db` | SQLite 路径（WAL） |
+| `hermes_base` | `http://10.210.32.30:8787` | Hermes AI 网关（**私网**，公网需自配，见上方环境要求） |
+| `github_api_base` | `https://api.github.com` | GitHub API base，GHE 填 `https://<host>/api/v3` |
+| `models` | review=glm-5.1 / summary·fix=kimi-k2.5 | 三角色模型链，`fallback` 为限流跨 plan 转移顺序 |
+| `ai_no_progress_timeout` | `420` | 距上次新 token 超此秒数无输出判卡死、换模型 |
+| `ai_stall_timeout` | `90` | 连接静默（无任何字节）读超时秒数 |
+| `ai_timeout` | `3600` | 单轮总时长硬上限（仅防跑飞兜底） |
+| `confidence_threshold` | `0.70` | 低于此置信度的问题不展示 |
+| `score_weights` | 0.4/0.3/0.2/0.1 | 安全/稳定性/性能/风格 评分权重 |
+| `scheduler_max_concurrent` | `2` | 后台同时在跑的评审上限，超额排队 |
+| `context_max_related_files` | `8` | 二级上下文最多拉取的关联文件数 |
+| `context_max_file_bytes` | `60000` | 单文件最大读取字节数 |
+| `context_history_reviews` | `20` | 四级上下文最多拉取的历史评论数 |
+| `review_context_small_max` / `_medium_max` | `15000` / `40000` | review 上下文分级阈值（变更 Diff 字符数） |
+
 ## Webhook 自动触发
 
 GitHub 仓库 Webhook 指向 `POST /webhook`（事件选 `pull_request`，

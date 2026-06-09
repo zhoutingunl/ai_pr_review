@@ -54,6 +54,9 @@ _DEFAULTS = {
         "style": 0.1,
     },
 
+    # 后台调度
+    "scheduler_max_concurrent": 2,     # 同时在跑的评审上限，超额排队
+
     # 上下文构建
     "context_max_related_files": 8,    # 二级上下文最多拉取的关联文件数
     "context_max_file_bytes": 60000,   # 单文件最大读取字节数

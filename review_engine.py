@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import json
+import logging
 
 from ai_service import AIError, extract_json
 from config import CONFIG
@@ -21,6 +22,8 @@ from context_builder import context_to_prompt, review_context_to_prompt
 from github_client import parse_pr_url
 from report_generator import ReportGenerator
 from risk_detector import RiskDetector
+
+_log = logging.getLogger(__name__)
 
 _LEVELS = ("P0", "P1", "P2", "P3")
 _CATEGORIES = ("security", "performance", "reliability", "maintainability", "style")
@@ -120,6 +123,7 @@ class ReviewEngine:
                                                        "score": result["score"]})
             return result
         except Exception as e:  # noqa: BLE001 - 失败统一落库
+            _log.exception("评审任务 #%s 失败: %s", task_id, e)
             self.store_.finish_task(task_id, "failed", error=str(e)[:1000])
             self.store_.record_event("review_failed", {"task_id": task_id,
                                                        "error": str(e)[:300]})
@@ -272,7 +276,9 @@ class ReviewEngine:
                                        snippet=snippet),
                     task_id=task_id, on_token=self._progress_cb(task_id))
                 data = extract_json(text)
-            except AIError:
+            except AIError as e:
+                _log.warning("生成修复建议失败(issue #%s)，跳过: %s",
+                             issue.get("id"), e)
                 continue
             if not isinstance(data, dict):
                 continue
@@ -432,7 +438,8 @@ class ReviewEngine:
                 comments=comments, task_id=task_id)
             return {"event": event, "comments": len(comments),
                     "review_id": result.get("id")}
-        except Exception:
+        except Exception as e:  # noqa: BLE001 - 回写失败逐级降级
+            _log.warning("Review 回写(%s)失败，尝试降级: %s", event, e)
             # REQUEST_CHANGES/APPROVE 对自己的 PR 会被 GitHub 拒绝(422)：
             # 先降级为 COMMENT 方式重试，保住行级评论
             if event != "COMMENT":
@@ -442,8 +449,8 @@ class ReviewEngine:
                         comments=comments, task_id=task_id)
                     return {"event": "COMMENT", "comments": len(comments),
                             "review_id": result.get("id")}
-                except Exception:
-                    pass
+                except Exception as e2:  # noqa: BLE001
+                    _log.warning("降级 COMMENT 回写仍失败，转整体评论: %s", e2)
             # 行级评论可能因行号不在 diff 中被整体拒绝：降级为整体评论
             self.store_.record_event("github_comment", {"task_id": task_id,
                                                         "fallback": True})

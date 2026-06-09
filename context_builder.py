@@ -11,10 +11,13 @@
 """
 from __future__ import annotations
 
+import logging
 import os
 import re
 
 from config import CONFIG
+
+_log = logging.getLogger(__name__)
 
 # 各语言 import 提取正则 -> 捕获模块/路径字符串
 _IMPORT_PATTERNS = {
@@ -144,7 +147,8 @@ class ContextBuilder:
 
         try:
             tree = self.github_.list_repo_tree(owner, repo, head_ref, task_id=task_id)
-        except Exception:  # noqa: BLE001 - 树拉取失败不阻塞主流程
+        except Exception as e:  # noqa: BLE001 - 树拉取失败不阻塞主流程
+            _log.warning("仓库树拉取失败，调用链/关联文件精度下降: %s", e)
             tree = list(changed_paths)
 
         # 变更文件完整内容（供 import 分析与行级定位）
@@ -268,8 +272,8 @@ class ContextBuilder:
                     "path": c.get("path", ""),
                     "body": (c.get("body") or "")[:500],
                 })
-        except Exception:  # noqa: BLE001 - 历史评论失败不阻塞主流程
-            pass
+        except Exception as e:  # noqa: BLE001 - 历史评论失败不阻塞主流程
+            _log.warning("历史 Review 评论拉取失败，四级上下文降级: %s", e)
         return history[: self.history_limit_ * 2]
 
 

@@ -74,6 +74,18 @@ def test_dashboard_snapshot(store):
     store.record_event("dashboard_open", {})
     snap = Dashboard(store).snapshot()
     assert set(snap) >= {"review", "ai", "issue", "github",
-                         "events", "recent_tasks"}
+                         "events", "recent_tasks", "scheduler"}
     assert snap["events"]["dashboard_open"] == 1
     assert snap["recent_tasks"][0]["repo"] == "a/b"
+    # 未注入 scheduler 时给出零值占位
+    assert snap["scheduler"]["max_concurrent"] == 0
+
+
+def test_dashboard_snapshot_with_scheduler(store):
+    from unittest.mock import MagicMock
+    sched = MagicMock()
+    sched.stats.return_value = {"in_flight": 1, "queued": 2,
+                                "max_concurrent": 2, "active": ["url"]}
+    snap = Dashboard(store, scheduler=sched).snapshot()
+    assert snap["scheduler"]["in_flight"] == 1
+    assert snap["scheduler"]["queued"] == 2

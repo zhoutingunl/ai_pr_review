@@ -40,7 +40,7 @@ class ReviewWebApp:
         self.scheduler_ = Scheduler(self.engine_)
         self.webhook_ = WebhookHandler(self.scheduler_, self.store_,
                                        CONFIG.webhook_secret_)
-        self.dashboard_ = Dashboard(self.store_)
+        self.dashboard_ = Dashboard(self.store_, self.scheduler_)
 
         self._register_routes()
 
@@ -163,4 +163,8 @@ def create_app(store: Store | None = None) -> ReviewWebApp:
 
 
 if __name__ == "__main__":  # pragma: no cover
+    import logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s [%(name)s] %(message)s")
     create_app().run()

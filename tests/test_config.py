@@ -7,6 +7,17 @@ from unittest.mock import patch
 from config import Config, _deep_merge, _load_env_file
 
 
+def test_example_config_mirrors_defaults():
+    """config.example.json 必须与 _DEFAULTS 顶层字段保持一致（防漂移）。"""
+    from config import _DEFAULTS, BASE_DIR
+    with open(os.path.join(BASE_DIR, "config.example.json"),
+              encoding="utf-8") as f:
+        example = json.load(f)
+    assert set(example.keys()) == set(_DEFAULTS.keys()), (
+        "config.example.json 与 _DEFAULTS 字段不同步：缺 "
+        f"{set(_DEFAULTS) - set(example)}，多 {set(example) - set(_DEFAULTS)}")
+
+
 def test_deep_merge():
     base = {"a": 1, "b": {"c": 2, "d": 3}}
     override = {"b": {"c": 9}, "e": 5}
