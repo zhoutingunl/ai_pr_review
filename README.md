@@ -11,8 +11,12 @@ DEMO视频链接 https://www.bilibili.com/video/BV1cVVE6WEac/?spm_id_from=333.13
 
 ## 环境要求
 
-**Python 3.11+**（开发与测试均基于 Python 3.11；下方命令使用 `python3.11`）。
-其余依赖见 `requirements.txt`。
+- **Python 3.11+**（开发与测试均基于 Python 3.11；下方命令使用 `python3.11`）。
+- **一个可达的 Hermes AI 网关**——本系统所有 AI 能力都经它。默认配置指向公司
+  **内网** Hermes（`http://10.210.32.30:8787`，仅 VPN 可达），**公网用户照默认会连不上**。
+  自建 / 公网复刻只需部署 Hermes + 它的 WebUI 并把 `HERMES_BASE` 指向它，
+  详见 **[docs/public.md](docs/public.md)**。
+- 其余依赖见 `requirements.txt`。
 
 ## 快速开始
 
@@ -20,11 +24,15 @@ DEMO视频链接 https://www.bilibili.com/video/BV1cVVE6WEac/?spm_id_from=333.13
 pip install -r requirements.txt
 
 # 配置（敏感信息禁止入库）
-cp .env.example .env          # 填 GITHUB_TOKEN / WEBHOOK_SECRET（缺省回落 gh auth token）
+cp .env.example .env          # 填 HERMES_BASE / GITHUB_TOKEN / WEBHOOK_SECRET
 cp config.example.json config.json   # 可选：调整模型映射、端口、阈值
 
 python3.11 app.py             # 默认 http://0.0.0.0:38001
 ```
+
+> ⚠️ 内网假设：`HERMES_BASE` 默认是内网地址。公网部署请按
+> [docs/public.md](docs/public.md) 配置自己的 Hermes 端点（或用根目录
+> `docker-compose.yml` 模板，Hermes 仍为外部依赖）。
 
 打开首页，粘贴 PR 地址（如 `https://github.com/owner/repo/pull/123`）即可发起评审；
 `/metrics` 为 QoS Dashboard。

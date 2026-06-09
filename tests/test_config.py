@@ -66,6 +66,19 @@ def test_config_defaults_and_json_override(tmp_path):
     assert cfg.db_path.endswith("review.db")
 
 
+def test_hermes_base_empty_falls_back_to_default():
+    # .env 里 HERMES_BASE= 留空 -> 回落内置默认，而非空串
+    with patch.dict(os.environ, {"HERMES_BASE": ""}):
+        cfg = Config(config_path="/nonexistent", env_path="/nonexistent")
+        assert cfg.hermes_base_ == "http://10.210.32.30:8787"
+
+
+def test_hermes_base_env_override():
+    with patch.dict(os.environ, {"HERMES_BASE": "https://hermes.example.com/"}):
+        cfg = Config(config_path="/nonexistent", env_path="/nonexistent")
+        assert cfg.hermes_base_ == "https://hermes.example.com"  # 末尾斜杠去除
+
+
 def test_github_token_from_env(tmp_path):
     with patch.dict(os.environ, {"GITHUB_TOKEN": "tok123"}):
         cfg = Config(config_path="/nonexistent", env_path="/nonexistent")

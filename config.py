@@ -109,7 +109,9 @@ class Config:
         self.data_ = data
 
         # 环境变量覆盖
-        self.hermes_base_ = os.environ.get("HERMES_BASE", data["hermes_base"]).rstrip("/")
+        # 空字符串（.env 中 HERMES_BASE= 留空）也回落到默认，便于公网用户"留空用默认"
+        self.hermes_base_ = (os.environ.get("HERMES_BASE")
+                             or data["hermes_base"]).rstrip("/")
         self.webhook_secret_ = os.environ.get("WEBHOOK_SECRET", "")
         self.github_token_ = self.resolve_github_token_()
 
