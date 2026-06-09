@@ -50,6 +50,18 @@ def test_secret_and_token():
     assert {"SEC_HARDCODED_SECRET", "SEC_TOKEN_LEAK"} <= rules_of(fs)
 
 
+def test_go_short_var_secret():
+    """Go := 短变量声明的硬编码密钥（旧 [:=] 正则漏报）。"""
+    d = RiskDetector()
+    fs = d.detect_file("main.go", wrap_patch(
+        '\tsecret := "s3cr3t-value"',
+        '\tapiKey := `hardcoded-token-x`'))   # 反引号字符串
+    assert "SEC_GO_SHORT_VAR" in rules_of(fs)
+    # Rust/Swift 的 let 形式本就被 SEC_HARDCODED_SECRET 命中（关键字在变量名）
+    fs2 = d.detect_file("a.rs", wrap_patch('    let api_key = "abcdef123";'))
+    assert "SEC_HARDCODED_SECRET" in rules_of(fs2)
+
+
 def test_shell_and_pickle():
     d = RiskDetector()
     fs = d.detect_file("a.py", wrap_patch(
